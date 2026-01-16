@@ -202,22 +202,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
     
-    # Создаем кнопку для открытия mini app
-    from telegram import WebAppInfo
-    web_app_url = f"https://hatch-app.vercel.app/?user_id={clicker_id}"
-    
-    # Меняем 🥚 на 🐣 и добавляем кнопку "Hatch App"
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "📊 Hatch App",
-            web_app=WebAppInfo(url=web_app_url)
-        )]
-    ])
-    
-    # Просто меняем текст сообщения на 🐣
+    # Меняем 🥚 на 🐣 (без кнопки, так как WebApp кнопки нельзя использовать при редактировании)
     await query.edit_message_text(
-        "🐣",
-        reply_markup=keyboard
+        "🐣"
     )
 
 
