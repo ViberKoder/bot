@@ -6,7 +6,8 @@ from telegram import (
     InlineKeyboardMarkup, 
     Update
 )
-from telegram.ext import Application, CommandHandler, InlineQueryHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, InlineQueryHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
+from telegram.constants import ChatMemberStatus
 from telegram.constants import ParseMode
 import uuid
 from aiohttp import web
@@ -32,6 +33,17 @@ eggs_hatched_by_user = {}
 # Статистика: сколько яиц пользователя вылупили другие
 # Формат: {user_id: count}
 user_eggs_hatched_by_others = {}
+
+# Поинты Egg для каждого пользователя
+# Формат: {user_id: points}
+egg_points = {}
+
+# Выполненные задания
+# Формат: {user_id: {task_name: True}}
+completed_tasks = {}
+
+# ID канала Cocoin
+COCOIN_CHANNEL = "@cocoin"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -194,6 +206,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Увеличиваем счетчик для отправителя (его яйцо вылупили)
     user_eggs_hatched_by_others[sender_id] = user_eggs_hatched_by_others.get(sender_id, 0) + 1
     
+    # Начисляем поинты Egg
+    # +1 очко тому, кто вылупил чужое яйцо
+    egg_points[clicker_id] = egg_points.get(clicker_id, 0) + 1
+    # +2 очка отправителю, чье яйцо вылупили
+    egg_points[sender_id] = egg_points.get(sender_id, 0) + 2
+    
     await query.answer("🐣 Hatching egg...")
     
     logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
@@ -219,6 +237,43 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик изменений статуса участников канала"""
+    if update.chat_member is None:
+        return
+    
+    chat = update.chat_member.chat
+    user = update.chat_member.from_user
+    new_status = update.chat_member.new_chat_member.status
+    
+    # Проверяем, что это канал Cocoin
+    if chat.username and chat.username.lower() == "cocoin":
+        user_id = user.id
+        
+        # Если пользователь подписался (стал MEMBER или не LEFT/KICKED)
+        if new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+            # Проверяем, не получал ли уже награду
+            if not completed_tasks.get(user_id, {}).get('subscribed_to_cocoin', False):
+                # Начисляем 333 Egg
+                egg_points[user_id] = egg_points.get(user_id, 0) + 333
+                
+                # Отмечаем задание как выполненное
+                if user_id not in completed_tasks:
+                    completed_tasks[user_id] = {}
+                completed_tasks[user_id]['subscribed_to_cocoin'] = True
+                
+                logger.info(f"User {user_id} subscribed to Cocoin, earned 333 Egg points")
+                
+                # Уведомляем пользователя
+                try:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text="🎉 Congratulations! You earned 333 Egg points for subscribing to @cocoin!"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send notification to user {user_id}: {e}")
+
+
 async def stats_api(request):
     """API endpoint для получения статистики"""
     # Добавляем CORS headers
@@ -241,28 +296,101 @@ async def stats_api(request):
     
     hatched_count = eggs_hatched_by_user.get(user_id, 0)
     my_eggs_hatched = user_eggs_hatched_by_others.get(user_id, 0)
+    points = egg_points.get(user_id, 0)
+    tasks = completed_tasks.get(user_id, {})
     
     return web.json_response(
         {
             'hatched_by_me': hatched_count,
-            'my_eggs_hatched': my_eggs_hatched
+            'my_eggs_hatched': my_eggs_hatched,
+            'egg_points': points,
+            'tasks': tasks
         },
         headers={'Access-Control-Allow-Origin': '*'}
     )
+
+
+# Глобальная переменная для хранения application (для проверки подписок)
+bot_application = None
+
+async def check_subscription_api(request):
+    """API endpoint для проверки подписки"""
+    # Добавляем CORS headers
+    user_id = request.query.get('user_id')
+    if not user_id:
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем подписку через Telegram API
+    try:
+        subscribed = completed_tasks.get(user_id, {}).get('subscribed_to_cocoin', False)
+        
+        # Если еще не отмечено как выполненное, проверяем через API
+        if not subscribed and bot_application:
+            try:
+                chat_member = await bot_application.bot.get_chat_member(
+                    chat_id=COCOIN_CHANNEL,
+                    user_id=user_id
+                )
+                
+                # Проверяем, что пользователь подписан
+                if chat_member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                    # Начисляем 333 Egg
+                    egg_points[user_id] = egg_points.get(user_id, 0) + 333
+                    
+                    # Отмечаем задание как выполненное
+                    if user_id not in completed_tasks:
+                        completed_tasks[user_id] = {}
+                    completed_tasks[user_id]['subscribed_to_cocoin'] = True
+                    
+                    subscribed = True
+                    logger.info(f"User {user_id} is subscribed to Cocoin, earned 333 Egg points")
+            except Exception as e:
+                logger.error(f"Error checking chat member: {e}")
+                # Если пользователь не найден или не подписан, subscribed остается False
+        
+        return web.json_response(
+            {
+                'subscribed': subscribed
+            },
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    except Exception as e:
+        logger.error(f"Error checking subscription: {e}")
+        return web.json_response(
+            {'error': 'failed to check subscription'}, 
+            status=500,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
 
 
 def main():
     """Запуск бота"""
     import threading
     import asyncio
+    global bot_application
     
     # Создаем приложение
     application = Application.builder().token(BOT_TOKEN).build()
+    bot_application = application
     
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
     application.add_handler(InlineQueryHandler(inline_query))
     application.add_handler(CallbackQueryHandler(button_callback))
+    application.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
     
     # Запускаем веб-сервер для API в отдельном потоке
     def run_api_server():
@@ -273,6 +401,7 @@ def main():
             
             app = web.Application()
             app.router.add_get('/api/stats', stats_api)
+            app.router.add_post('/api/stats/check_subscription', check_subscription_api)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', port)
