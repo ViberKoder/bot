@@ -90,8 +90,10 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем ID отправителя
     sender_id = update.inline_query.from_user.id
     
-    # Создаем уникальный ID для этого яйца (используем короткий формат без дефисов)
-    egg_id = str(uuid.uuid4()).replace("-", "")
+    # Создаем уникальный ID для этого яйца
+    # Используем короткий формат: первые 16 символов UUID без дефисов
+    # Это достаточно для уникальности и помещается в лимит Telegram (64 байта)
+    egg_id = str(uuid.uuid4()).replace("-", "")[:16]
     
     # Сохраняем информацию об отправителе яйца
     # Формат callback_data: hatch_{sender_id}|{egg_id}
@@ -99,11 +101,21 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     callback_data = f"hatch_{sender_id}|{egg_id}"
     
     # Проверяем длину callback_data (максимум 64 байта для Telegram)
-    if len(callback_data.encode('utf-8')) > 64:
-        # Если слишком длинный, используем более короткий формат
-        egg_id = egg_id[:16]  # Укорачиваем UUID
-        callback_data = f"hatch_{sender_id}|{egg_id}"
-        logger.warning(f"Callback data too long, shortened egg_id to {egg_id}")
+    callback_data_bytes = len(callback_data.encode('utf-8'))
+    if callback_data_bytes > 64:
+        # Если все еще слишком длинный, укорачиваем еще больше
+        # sender_id обычно 8-10 цифр, оставляем место для префикса "hatch_" и разделителя "|"
+        max_egg_id_len = 64 - len(f"hatch_{sender_id}|".encode('utf-8'))
+        if max_egg_id_len > 0:
+            egg_id = egg_id[:max_egg_id_len]
+            callback_data = f"hatch_{sender_id}|{egg_id}"
+            logger.warning(f"Callback data too long, shortened egg_id to {egg_id} (length: {len(egg_id)})")
+        else:
+            # Если даже с минимальным egg_id не помещается, используем только sender_id и timestamp
+            import time
+            egg_id = str(int(time.time()))[-8:]  # Последние 8 цифр timestamp
+            callback_data = f"hatch_{sender_id}|{egg_id}"
+            logger.warning(f"Callback data still too long, using timestamp-based egg_id: {egg_id}")
     
     # Создаем кнопку "Hatch"
     keyboard = InlineKeyboardMarkup([
@@ -190,10 +202,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Egg ID: {egg_id}, Sender ID: {sender_id}, Clicker ID: {clicker_id}")
     
+    # Создаем уникальный ключ для яйца (комбинация sender_id и egg_id)
+    # Это предотвращает коллизии при укорачивании UUID
+    egg_key = f"{sender_id}_{egg_id}"
+    
     # Проверяем, не было ли уже вылуплено это яйцо
-    if egg_id in hatched_eggs:
+    if egg_key in hatched_eggs:
         await query.answer("🐣 This egg has already hatched!", show_alert=True)
-        logger.info(f"Egg {egg_id} already hatched")
+        logger.info(f"Egg {egg_key} already hatched")
         return
     
     # ВАЖНО: Проверяем, не пытается ли отправитель вылупить свое яйцо
@@ -205,7 +221,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Если все проверки пройдены, вылупляем яйцо
     # Помечаем яйцо как вылупленное СРАЗУ, чтобы предотвратить двойное вылупление
-    hatched_eggs.add(egg_id)
+    # Используем egg_key (комбинация sender_id и egg_id) для уникальности
+    hatched_eggs.add(egg_key)
     
     # Обновляем статистику
     # Увеличиваем счетчик для того, кто вылупил
