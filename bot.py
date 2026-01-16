@@ -4,15 +4,17 @@ from telegram import (
     InputTextMessageContent, 
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
-    Update
+    Update,
+    LabeledPrice
 )
-from telegram.ext import Application, CommandHandler, InlineQueryHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler
+from telegram.ext import Application, CommandHandler, InlineQueryHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, PreCheckoutQueryHandler, MessageHandler, filters
 from telegram.constants import ChatMemberStatus
 from telegram.constants import ParseMode
 import uuid
 from aiohttp import web
 import json
 import os
+from datetime import datetime, date
 
 # Настройка логирования
 logging.basicConfig(
@@ -30,6 +32,10 @@ DATA_FILE = "bot_data.json"
 # ID канала Cocoin
 COCOIN_CHANNEL = "@cocoin"
 
+# Лимиты
+FREE_EGGS_PER_DAY = 10
+EGG_PRICE_STARS = 1  # 1 яйцо = 1 Star
+
 # Функция для загрузки данных из файла
 def load_data():
     """Загружает данные из файла"""
@@ -42,6 +48,7 @@ def load_data():
                     'eggs_hatched_by_user': data.get('eggs_hatched_by_user', {}),
                     'user_eggs_hatched_by_others': data.get('user_eggs_hatched_by_others', {}),
                     'eggs_sent_by_user': data.get('eggs_sent_by_user', {}),
+                    'daily_eggs_sent': data.get('daily_eggs_sent', {}),  # {user_id: {'date': '2024-01-01', 'count': 5}}
                     'egg_points': data.get('egg_points', {}),
                     'completed_tasks': data.get('completed_tasks', {})
                 }
@@ -58,6 +65,7 @@ def get_default_data():
         'eggs_hatched_by_user': {},
         'user_eggs_hatched_by_others': {},
         'eggs_sent_by_user': {},
+        'daily_eggs_sent': {},
         'egg_points': {},
         'completed_tasks': {}
     }
@@ -71,6 +79,7 @@ def save_data():
             'eggs_hatched_by_user': eggs_hatched_by_user,
             'user_eggs_hatched_by_others': user_eggs_hatched_by_others,
             'eggs_sent_by_user': eggs_sent_by_user,
+            'daily_eggs_sent': daily_eggs_sent,
             'egg_points': egg_points,
             'completed_tasks': completed_tasks
         }
@@ -86,8 +95,40 @@ hatched_eggs = data['hatched_eggs']
 eggs_hatched_by_user = data['eggs_hatched_by_user']
 user_eggs_hatched_by_others = data['user_eggs_hatched_by_others']
 eggs_sent_by_user = data.get('eggs_sent_by_user', {})
+daily_eggs_sent = data.get('daily_eggs_sent', {})
 egg_points = data['egg_points']
 completed_tasks = data['completed_tasks']
+
+# Функция для проверки и обновления ежедневного лимита
+def check_daily_limit(user_id):
+    """Проверяет и обновляет ежедневный лимит отправленных яиц. Возвращает (can_send, daily_count)"""
+    today = date.today().isoformat()
+    
+    # Получаем данные пользователя
+    user_data = daily_eggs_sent.get(user_id, {})
+    
+    # Если это новый день или первый раз, сбрасываем счетчик
+    if user_data.get('date') != today:
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0}
+        user_data = daily_eggs_sent[user_id]
+    
+    daily_count = user_data.get('count', 0)
+    
+    # Проверяем лимит
+    if daily_count < FREE_EGGS_PER_DAY:
+        return (True, daily_count)
+    else:
+        return (False, daily_count)
+
+def increment_daily_count(user_id):
+    """Увеличивает счетчик отправленных яиц за сегодня"""
+    today = date.today().isoformat()
+    
+    user_data = daily_eggs_sent.get(user_id, {})
+    if user_data.get('date') != today:
+        daily_eggs_sent[user_id] = {'date': today, 'count': 1}
+    else:
+        daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -218,11 +259,118 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Failed to send notification to user {sender_id}: {e}")
 
 
+async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик предварительной проверки платежа"""
+    query = update.pre_checkout_query
+    logger.info(f"Pre-checkout query received: {query.invoice_payload}")
+    
+    # Всегда подтверждаем платеж
+    await query.answer(ok=True)
+    logger.info(f"Pre-checkout approved for payload: {query.invoice_payload}")
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик успешного платежа"""
+    payment = update.message.successful_payment
+    user_id = update.message.from_user.id
+    
+    logger.info(f"Successful payment received: {payment.invoice_payload}, amount: {payment.total_amount} {payment.currency}")
+    
+    # Парсим payload: egg_payment_{sender_id}|{egg_id}
+    if payment.invoice_payload.startswith("egg_payment_"):
+        payload_part = payment.invoice_payload[12:]  # Убираем "egg_payment_"
+        parts = payload_part.split("|")
+        
+        if len(parts) >= 2:
+            try:
+                sender_id = int(parts[0])
+                egg_id = parts[1]
+                
+                # Проверяем, что платеж от правильного пользователя
+                if user_id != sender_id:
+                    logger.error(f"Payment user mismatch: {user_id} != {sender_id}")
+                    await update.message.reply_text("❌ Error: Payment user mismatch")
+                    return
+                
+                # Создаем яйцо с кнопкой Hatch
+                callback_data = f"hatch_{sender_id}|{egg_id}"
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🥚 Hatch", callback_data=callback_data)]
+                ])
+                
+                # Отправляем яйцо в тот же чат, где был платеж
+                try:
+                    await update.message.reply_text("🥚", reply_markup=keyboard)
+                    logger.info(f"Egg sent after payment for user {user_id}, egg_id: {egg_id}")
+                    
+                    # Увеличиваем счетчики
+                    eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
+                    increment_daily_count(sender_id)
+                    
+                    # Проверяем задание "Send 100 egg"
+                    if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
+                        egg_points[sender_id] = egg_points.get(sender_id, 0) + 500
+                        if sender_id not in completed_tasks:
+                            completed_tasks[sender_id] = {}
+                        completed_tasks[sender_id]['send_100_eggs'] = True
+                        await update.message.reply_text("🎉 Congratulations! You earned 500 Egg points for sending 100 eggs!")
+                    
+                    save_data()
+                    
+                except Exception as e:
+                    logger.error(f"Error sending egg after payment: {e}")
+                    await update.message.reply_text("❌ Error sending egg. Please contact support.")
+            except (ValueError, IndexError) as e:
+                logger.error(f"Error parsing payment payload: {e}")
+                await update.message.reply_text("❌ Error processing payment. Please contact support.")
+        else:
+            logger.error(f"Invalid payment payload format: {payment.invoice_payload}")
+            await update.message.reply_text("❌ Error: Invalid payment payload")
+    else:
+        logger.warning(f"Unknown payment payload: {payment.invoice_payload}")
+
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик нажатий на кнопки"""
     query = update.callback_query
     
     logger.info(f"Button callback received: {query.data}")
+    
+    # Обработка оплаты яйца
+    if query.data.startswith("pay_egg_"):
+        user_id = query.from_user.id
+        data_part = query.data[8:]  # Убираем "pay_egg_"
+        parts = data_part.split("|")
+        
+        if len(parts) >= 2:
+            try:
+                sender_id = int(parts[0])
+                egg_id = parts[1]
+                
+                # Проверяем, что пользователь оплачивает свое яйцо
+                if user_id != sender_id:
+                    await query.answer("❌ Error: Invalid payment request", show_alert=True)
+                    return
+                
+                # Создаем invoice для оплаты
+                try:
+                    await context.bot.send_invoice(
+                        chat_id=user_id,
+                        title="🥚 Send Egg",
+                        description=f"Pay {EGG_PRICE_STARS} Telegram Star to send one egg",
+                        payload=f"egg_payment_{sender_id}|{egg_id}",
+                        provider_token=None,  # Для Telegram Stars provider_token не нужен
+                        currency="XTR",  # XTR - это валюта Telegram Stars
+                        prices=[LabeledPrice(label="1 Egg", amount=EGG_PRICE_STARS)],
+                        start_parameter=f"egg_{egg_id}"
+                    )
+                    await query.answer("💳 Opening payment...")
+                    logger.info(f"Sent invoice to user {user_id} for egg payment")
+                except Exception as e:
+                    logger.error(f"Error sending invoice: {e}")
+                    await query.answer(f"❌ Error: {str(e)}", show_alert=True)
+            except (ValueError, IndexError) as e:
+                logger.error(f"Error parsing payment callback: {e}")
+                await query.answer("❌ Error: Invalid payment request", show_alert=True)
+        return
     
     # Получаем ID пользователя, который нажал на кнопку
     clicker_id = query.from_user.id
@@ -536,6 +684,8 @@ def main():
     application.add_handler(InlineQueryHandler(inline_query))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
+    application.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     
     # Запускаем веб-сервер для API в отдельном потоке
     def run_api_server():
