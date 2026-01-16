@@ -34,7 +34,8 @@ COCOIN_CHANNEL = "@cocoin"
 
 # Лимиты
 FREE_EGGS_PER_DAY = 10
-EGG_PRICE_STARS = 1  # 1 яйцо = 1 Star
+EGG_PACK_PRICE_STARS = 10  # 10 яиц = 10 Stars
+EGG_PACK_SIZE = 10  # Количество яиц в пакете
 
 # Функция для загрузки данных из файла
 def load_data():
@@ -299,56 +300,35 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
     
     logger.info(f"Successful payment received: {payment.invoice_payload}, amount: {payment.total_amount} {payment.currency}")
     
-    # Парсим payload: egg_payment_{sender_id}|{egg_id}
-    if payment.invoice_payload.startswith("egg_payment_"):
-        payload_part = payment.invoice_payload[12:]  # Убираем "egg_payment_"
-        parts = payload_part.split("|")
+    # Парсим payload: egg_pack_{sender_id}
+    if payment.invoice_payload.startswith("egg_pack_"):
+        payload_part = payment.invoice_payload[9:]  # Убираем "egg_pack_"
         
-        if len(parts) >= 2:
+        try:
+            sender_id = int(payload_part)
+            
+            # Проверяем, что платеж от правильного пользователя
+            if user_id != sender_id:
+                logger.error(f"Payment user mismatch: {user_id} != {sender_id}")
+                await update.message.reply_text("❌ Error: Payment user mismatch")
+                return
+            
+            # Добавляем оплаченные яйца к лимиту пользователя
+            add_paid_eggs(sender_id, EGG_PACK_SIZE)
+            save_data()
+            
+            # Уведомляем пользователя
             try:
-                sender_id = int(parts[0])
-                egg_id = parts[1]
-                
-                # Проверяем, что платеж от правильного пользователя
-                if user_id != sender_id:
-                    logger.error(f"Payment user mismatch: {user_id} != {sender_id}")
-                    await update.message.reply_text("❌ Error: Payment user mismatch")
-                    return
-                
-                # Создаем яйцо с кнопкой Hatch
-                callback_data = f"hatch_{sender_id}|{egg_id}"
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🥚 Hatch", callback_data=callback_data)]
-                ])
-                
-                # Отправляем яйцо в тот же чат, где был платеж
-                try:
-                    await update.message.reply_text("🥚", reply_markup=keyboard)
-                    logger.info(f"Egg sent after payment for user {user_id}, egg_id: {egg_id}")
-                    
-                    # Увеличиваем счетчики
-                    eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
-                    increment_daily_count(sender_id)
-                    
-                    # Проверяем задание "Send 100 egg"
-                    if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
-                        egg_points[sender_id] = egg_points.get(sender_id, 0) + 500
-                        if sender_id not in completed_tasks:
-                            completed_tasks[sender_id] = {}
-                        completed_tasks[sender_id]['send_100_eggs'] = True
-                        await update.message.reply_text("🎉 Congratulations! You earned 500 Egg points for sending 100 eggs!")
-                    
-                    save_data()
-                    
-                except Exception as e:
-                    logger.error(f"Error sending egg after payment: {e}")
-                    await update.message.reply_text("❌ Error sending egg. Please contact support.")
-            except (ValueError, IndexError) as e:
-                logger.error(f"Error parsing payment payload: {e}")
-                await update.message.reply_text("❌ Error processing payment. Please contact support.")
-        else:
-            logger.error(f"Invalid payment payload format: {payment.invoice_payload}")
-            await update.message.reply_text("❌ Error: Invalid payment payload")
+                await update.message.reply_text(
+                    f"✅ Payment successful! You've received {EGG_PACK_SIZE} eggs.\n\n"
+                    f"You can now send {EGG_PACK_SIZE} more eggs today!"
+                )
+                logger.info(f"Added {EGG_PACK_SIZE} paid eggs to user {user_id}")
+            except Exception as e:
+                logger.error(f"Error sending confirmation message: {e}")
+        except ValueError as e:
+            logger.error(f"Error parsing payment payload: {e}")
+            await update.message.reply_text("❌ Error processing payment. Please contact support.")
     else:
         logger.warning(f"Unknown payment payload: {payment.invoice_payload}")
 
@@ -358,42 +338,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Button callback received: {query.data}")
     
-    # Обработка оплаты яйца
-    if query.data.startswith("pay_egg_"):
+    # Обработка покупки пакета яиц
+    if query.data.startswith("buy_eggs_"):
         user_id = query.from_user.id
-        data_part = query.data[8:]  # Убираем "pay_egg_"
-        parts = data_part.split("|")
+        data_part = query.data[9:]  # Убираем "buy_eggs_"
         
-        if len(parts) >= 2:
-            try:
-                sender_id = int(parts[0])
-                egg_id = parts[1]
-                
-                # Проверяем, что пользователь оплачивает свое яйцо
-                if user_id != sender_id:
-                    await query.answer("❌ Error: Invalid payment request", show_alert=True)
-                    return
-                
-                # Создаем invoice для оплаты
-                try:
-                    await context.bot.send_invoice(
-                        chat_id=user_id,
-                        title="🥚 Send Egg",
-                        description=f"Pay {EGG_PRICE_STARS} Telegram Star to send one egg",
-                        payload=f"egg_payment_{sender_id}|{egg_id}",
-                        provider_token=None,  # Для Telegram Stars provider_token не нужен
-                        currency="XTR",  # XTR - это валюта Telegram Stars
-                        prices=[LabeledPrice(label="1 Egg", amount=EGG_PRICE_STARS)],
-                        start_parameter=f"egg_{egg_id}"
-                    )
-                    await query.answer("💳 Opening payment...")
-                    logger.info(f"Sent invoice to user {user_id} for egg payment")
-                except Exception as e:
-                    logger.error(f"Error sending invoice: {e}")
-                    await query.answer(f"❌ Error: {str(e)}", show_alert=True)
-            except (ValueError, IndexError) as e:
-                logger.error(f"Error parsing payment callback: {e}")
+        try:
+            sender_id = int(data_part)
+            
+            # Проверяем, что пользователь покупает для себя
+            if user_id != sender_id:
                 await query.answer("❌ Error: Invalid payment request", show_alert=True)
+                return
+            
+            # Создаем invoice для покупки пакета яиц
+            try:
+                await context.bot.send_invoice(
+                    chat_id=user_id,
+                    title=f"🥚 {EGG_PACK_SIZE} Eggs Pack",
+                    description=f"Buy {EGG_PACK_SIZE} eggs for {EGG_PACK_PRICE_STARS} Telegram Stars",
+                    payload=f"egg_pack_{sender_id}",
+                    provider_token="",  # Для Telegram Stars provider_token должен быть пустой строкой
+                    currency="XTR",  # XTR - это валюта Telegram Stars
+                    prices=[LabeledPrice(label=f"{EGG_PACK_SIZE} Eggs", amount=EGG_PACK_PRICE_STARS)],
+                    start_parameter=f"egg_pack_{sender_id}"
+                )
+                await query.answer("💳 Opening payment...")
+                logger.info(f"Sent invoice to user {user_id} for {EGG_PACK_SIZE} eggs pack")
+            except Exception as e:
+                logger.error(f"Error sending invoice: {e}")
+                await query.answer(f"❌ Error: {str(e)}", show_alert=True)
+        except ValueError as e:
+            logger.error(f"Error parsing buy eggs callback: {e}")
+            await query.answer("❌ Error: Invalid payment request", show_alert=True)
         return
     
     # Получаем ID пользователя, который нажал на кнопку
