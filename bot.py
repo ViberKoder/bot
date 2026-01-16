@@ -98,6 +98,13 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Используем | как разделитель, чтобы избежать проблем с UUID
     callback_data = f"hatch_{sender_id}|{egg_id}"
     
+    # Проверяем длину callback_data (максимум 64 байта для Telegram)
+    if len(callback_data.encode('utf-8')) > 64:
+        # Если слишком длинный, используем более короткий формат
+        egg_id = egg_id[:16]  # Укорачиваем UUID
+        callback_data = f"hatch_{sender_id}|{egg_id}"
+        logger.warning(f"Callback data too long, shortened egg_id to {egg_id}")
+    
     # Создаем кнопку "Hatch"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🥚 Hatch", callback_data=callback_data)]
@@ -118,7 +125,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.inline_query.answer(results, cache_time=1)
-    logger.info(f"Results sent: {len(results)} result(s)")
+    logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
