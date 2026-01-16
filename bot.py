@@ -41,6 +41,7 @@ def load_data():
                     'hatched_eggs': set(data.get('hatched_eggs', [])),
                     'eggs_hatched_by_user': data.get('eggs_hatched_by_user', {}),
                     'user_eggs_hatched_by_others': data.get('user_eggs_hatched_by_others', {}),
+                    'eggs_sent_by_user': data.get('eggs_sent_by_user', {}),
                     'egg_points': data.get('egg_points', {}),
                     'completed_tasks': data.get('completed_tasks', {})
                 }
@@ -56,6 +57,7 @@ def get_default_data():
         'hatched_eggs': set(),
         'eggs_hatched_by_user': {},
         'user_eggs_hatched_by_others': {},
+        'eggs_sent_by_user': {},
         'egg_points': {},
         'completed_tasks': {}
     }
@@ -68,6 +70,7 @@ def save_data():
             'hatched_eggs': list(hatched_eggs),
             'eggs_hatched_by_user': eggs_hatched_by_user,
             'user_eggs_hatched_by_others': user_eggs_hatched_by_others,
+            'eggs_sent_by_user': eggs_sent_by_user,
             'egg_points': egg_points,
             'completed_tasks': completed_tasks
         }
@@ -82,6 +85,7 @@ data = load_data()
 hatched_eggs = data['hatched_eggs']
 eggs_hatched_by_user = data['eggs_hatched_by_user']
 user_eggs_hatched_by_others = data['user_eggs_hatched_by_others']
+eggs_sent_by_user = data.get('eggs_sent_by_user', {})
 egg_points = data['egg_points']
 completed_tasks = data['completed_tasks']
 
@@ -178,6 +182,33 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.inline_query.answer(results, cache_time=1)
     logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}")
+    
+    # Увеличиваем счетчик отправленных яиц
+    eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
+    
+    # Проверяем задание "Send 100 egg"
+    if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
+        # Начисляем 500 Egg
+        egg_points[sender_id] = egg_points.get(sender_id, 0) + 500
+        
+        # Отмечаем задание как выполненное
+        if sender_id not in completed_tasks:
+            completed_tasks[sender_id] = {}
+        completed_tasks[sender_id]['send_100_eggs'] = True
+        
+        # Сохраняем данные
+        save_data()
+        
+        logger.info(f"User {sender_id} completed 'Send 100 egg' task, earned 500 Egg points")
+        
+        # Уведомляем пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=sender_id,
+                text="🎉 Congratulations! You earned 500 Egg points for sending 100 eggs!"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send notification to user {sender_id}: {e}")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -275,6 +306,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     egg_points[clicker_id] = egg_points.get(clicker_id, 0) + 1
     # +2 очка отправителю, чье яйцо вылупили
     egg_points[sender_id] = egg_points.get(sender_id, 0) + 2
+    
+    # Проверяем задание "Hatch 100 egg"
+    hatched_count = eggs_hatched_by_user.get(clicker_id, 0)
+    if hatched_count >= 100 and not completed_tasks.get(clicker_id, {}).get('hatch_100_eggs', False):
+        # Начисляем 500 Egg
+        egg_points[clicker_id] = egg_points.get(clicker_id, 0) + 500
+        
+        # Отмечаем задание как выполненное
+        if clicker_id not in completed_tasks:
+            completed_tasks[clicker_id] = {}
+        completed_tasks[clicker_id]['hatch_100_eggs'] = True
+        
+        logger.info(f"User {clicker_id} completed 'Hatch 100 egg' task, earned 500 Egg points")
+        
+        # Уведомляем пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=clicker_id,
+                text="🎉 Congratulations! You earned 500 Egg points for hatching 100 eggs!"
+            )
+        except Exception as e:
+            logger.error(f"Failed to send notification to user {clicker_id}: {e}")
     
     # Сохраняем данные после обновления
     save_data()
@@ -376,6 +429,7 @@ async def stats_api(request):
     
     hatched_count = eggs_hatched_by_user.get(user_id, 0)
     my_eggs_hatched = user_eggs_hatched_by_others.get(user_id, 0)
+    sent_count = eggs_sent_by_user.get(user_id, 0)
     points = egg_points.get(user_id, 0)
     tasks = completed_tasks.get(user_id, {})
     
@@ -383,6 +437,7 @@ async def stats_api(request):
         {
             'hatched_by_me': hatched_count,
             'my_eggs_hatched': my_eggs_hatched,
+            'eggs_sent': sent_count,
             'egg_points': points,
             'tasks': tasks
         },
