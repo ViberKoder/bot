@@ -36,8 +36,6 @@ user_eggs_hatched_by_others = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
-    from telegram import WebAppInfo
-    
     user_id = update.message.from_user.id
     
     # Получаем статистику пользователя
