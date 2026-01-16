@@ -1,52 +1,68 @@
 # ToHatch Bot 🥚
 
-Telegram бот для отправки яиц через inline mode с возможностью вылупления и отслеживания статистики.
+Telegram bot for sending and hatching eggs via inline mode with statistics tracking.
 
-## Установка
+## Features
 
-1. Установите зависимости:
+- ✅ Inline mode - send eggs in any chat via `@tohatchbot egg`
+- ✅ Only recipients can hatch eggs (sender cannot hatch their own)
+- ✅ Statistics tracking - how many eggs you hatched and how many of yours were hatched
+- ✅ API server for mini app integration
+- ✅ Beautiful mini app integration
+
+## Quick Start
+
+### Local Development
+
+1. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Запустите бота:
+2. Set bot token in `bot.py` or use environment variable:
+```bash
+export BOT_TOKEN=your_token_here
+```
+
+3. Run bot:
 ```bash
 python bot.py
 ```
 
-## Использование
+The bot will start and API server will be available on `http://localhost:8080/api/stats`
 
-1. Найдите бота в Telegram: @tohatchbot
-2. В любом чате начните вводить `@tohatchbot egg`
-3. Выберите "Отправить яйцо" из результатов
-4. В чате появится яйцо 🥚 с кнопкой "🥚 Hatch"
-5. Нажмите "Hatch" чтобы вылупить яйцо! 🐣
+## Deployment
 
-## Особенности
+### Railway (Recommended)
 
-- ✅ Работает через inline mode в любом чате
-- ✅ Отправитель не может вылупить свое яйцо
-- ✅ Только получатель может вылупить яйцо
-- ✅ Отслеживание статистики вылуплений
-- ✅ Mini app для просмотра статистики
+1. Go to https://railway.app
+2. New Project → Deploy from GitHub repo
+3. Select this repository: `ViberKoder/bot`
+4. Add environment variable:
+   - `BOT_TOKEN=8439367607:AAGcK4tBrXKkqm5DDG7Sp3YSKEQTX09XqXE`
+5. Railway will automatically detect Python and run the bot
 
-## Mini App
+After deployment, you'll get a public URL like: `https://your-app.railway.app`
 
-Mini app доступна по адресу: https://tohatchbot.github.io/hatch/
+### Render
 
-Показывает:
-- Сколько чужих яиц вы вылупили
-- Сколько ваших яиц вылупили другие
+1. Go to https://render.com
+2. New → Web Service
+3. Connect GitHub repo
+4. Settings:
+   - Build Command: `pip install -r requirements.txt`
+   - Start Command: `python bot.py`
+5. Add `BOT_TOKEN` environment variable
 
-## API
+## API Endpoint
 
-Бот запускает API сервер на порту 8080 для получения статистики:
+The bot runs an API server on port 8080 (or PORT from environment):
 
 ```
 GET /api/stats?user_id={user_id}
 ```
 
-Ответ:
+Response:
 ```json
 {
   "hatched_by_me": 10,
@@ -54,16 +70,33 @@ GET /api/stats?user_id={user_id}
 }
 ```
 
-## Технические детали
+## Usage
 
-- Использует библиотеку `python-telegram-bot` версии 20.0+
-- Хранит статистику в памяти (для продакшена рекомендуется использовать БД)
-- API сервер работает на порту 8080
-- Mini app развернута на GitHub Pages
+1. Find bot in Telegram: @tohatchbot
+2. In any chat, type `@tohatchbot egg`
+3. Select "🥚 Send Egg" from results
+4. Recipient clicks "Hatch" to hatch the egg
+5. After hatching, "📊 Hatch App" button appears to view stats
 
-## Развертывание
+## Mini App
 
-1. Настройте токен бота в `bot.py`
-2. Запустите бота
-3. Настройте reverse proxy для API (nginx, Cloudflare Tunnel и т.д.)
-4. Разверните mini app на GitHub Pages (см. `hatch_miniapp/DEPLOY.md`)
+The bot integrates with a mini app for viewing statistics:
+- Mini app repo: https://github.com/ViberKoder/hatch
+- Deployed on Vercel: https://hatch-ruddy.vercel.app
+
+Update `API_URL` in mini app to point to your bot's API endpoint.
+
+## Environment Variables
+
+- `BOT_TOKEN` - Telegram bot token (required)
+- `PORT` - Port for API server (default: 8080)
+
+## Tech Stack
+
+- Python 3.11+
+- python-telegram-bot 20.0+
+- aiohttp 3.8.0+
+
+## License
+
+MIT
