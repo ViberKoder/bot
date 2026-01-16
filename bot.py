@@ -198,15 +198,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
     
-    # Создаем кнопку для открытия mini app
+    # Создаем кнопки для открытия mini app и отправки еще одного яйца
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            "📊 Hatch App",
-            url="https://t.me/ToHatchBot/app"
-        )]
+        [
+            InlineKeyboardButton(
+                "📱 Hatch App",
+                url="https://t.me/ToHatchBot/app"
+            ),
+            InlineKeyboardButton(
+                "Send 🥚",
+                switch_inline_query_current_chat="egg"
+            )
+        ]
     ])
     
-    # Меняем 🥚 на 🐣 и добавляем кнопку
+    # Меняем 🥚 на 🐣 и добавляем кнопки
     await query.edit_message_text(
         "🐣",
         reply_markup=keyboard
