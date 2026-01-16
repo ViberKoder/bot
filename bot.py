@@ -45,12 +45,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     my_eggs_hatched = user_eggs_hatched_by_others.get(user_id, 0)
     
     # Создаем кнопку для открытия mini app
-    # Передаем user_id в URL для получения статистики
-    web_app_url = f"https://hatch-app.vercel.app/?user_id={user_id}"
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(
             "📊 View Stats",
-            web_app=WebAppInfo(url=web_app_url)
+            url="https://t.me/ToHatchBot/app"
         )]
     ])
     
@@ -202,9 +200,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
     
-    # Меняем 🥚 на 🐣 (без кнопки, так как WebApp кнопки нельзя использовать при редактировании)
+    # Создаем кнопку для открытия mini app
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "📊 Hatch App",
+            url="https://t.me/ToHatchBot/app"
+        )]
+    ])
+    
+    # Меняем 🥚 на 🐣 и добавляем кнопку
     await query.edit_message_text(
-        "🐣"
+        "🐣",
+        reply_markup=keyboard
     )
 
 
