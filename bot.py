@@ -198,9 +198,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Увеличиваем счетчик для отправителя (его яйцо вылупили)
     user_eggs_hatched_by_others[sender_id] = user_eggs_hatched_by_others.get(sender_id, 0) + 1
     
+    await query.answer("🐣 Hatching egg...")
+    
     logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
-    logger.info(f"Stats updated: {clicker_id} hatched {eggs_hatched_by_user[clicker_id]} eggs, "
-                f"{sender_id} has {user_eggs_hatched_by_others[sender_id]} eggs hatched")
     
     # Создаем кнопку для открытия mini app
     from telegram import WebAppInfo
@@ -214,44 +214,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )]
     ])
     
-    # Пытаемся изменить сообщение
-    try:
-        # Сначала отвечаем на callback, чтобы убрать индикатор загрузки
-        await query.answer("🐣 Hatching egg...")
-        
-        # Проверяем тип сообщения и редактируем
-        if query.message.text is not None:
-            # Это текстовое сообщение
-            await query.edit_message_text(
-                "🐣",
-                reply_markup=keyboard
-            )
-            logger.info("Successfully updated text message to hatched egg")
-        elif query.message.caption is not None:
-            # Это сообщение с подписью
-            await query.edit_message_caption(
-                caption="🐣",
-                reply_markup=keyboard
-            )
-            logger.info("Successfully updated caption to hatched egg")
-        else:
-            # Если не можем определить тип, пробуем edit_message_text
-            await query.edit_message_text(
-                "🐣",
-                reply_markup=keyboard
-            )
-            logger.info("Successfully updated message (fallback) to hatched egg")
-    except Exception as e:
-        logger.error(f"Error updating message: {e}, type: {type(e).__name__}")
-        # Пробуем отправить новое сообщение как fallback
-        try:
-            await query.message.reply_text(
-                "🐣",
-                reply_markup=keyboard
-            )
-            logger.info("Sent new message as fallback")
-        except Exception as e2:
-            logger.error(f"Error sending new message: {e2}, type: {type(e2).__name__}")
+    # Просто меняем текст сообщения на 🐣
+    await query.edit_message_text(
+        "🐣",
+        reply_markup=keyboard
+    )
 
 
 async def stats_api(request):
