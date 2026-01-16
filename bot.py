@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 import uuid
 from aiohttp import web
 import json
+import os
 
 # Настройка логирования
 logging.basicConfig(
@@ -23,27 +24,66 @@ logger = logging.getLogger(__name__)
 # Токен бота
 BOT_TOKEN = "8439367607:AAGcK4tBrXKkqm5DDG7Sp3YSKEQTX09XqXE"
 
-# Хранилище для отслеживания вылупленных яиц (в продакшене лучше использовать БД)
-hatched_eggs = set()
-
-# Статистика: сколько яиц вылупил каждый пользователь
-# Формат: {user_id: count}
-eggs_hatched_by_user = {}
-
-# Статистика: сколько яиц пользователя вылупили другие
-# Формат: {user_id: count}
-user_eggs_hatched_by_others = {}
-
-# Поинты Egg для каждого пользователя
-# Формат: {user_id: points}
-egg_points = {}
-
-# Выполненные задания
-# Формат: {user_id: {task_name: True}}
-completed_tasks = {}
+# Файл для сохранения данных
+DATA_FILE = "bot_data.json"
 
 # ID канала Cocoin
 COCOIN_CHANNEL = "@cocoin"
+
+# Функция для загрузки данных из файла
+def load_data():
+    """Загружает данные из файла"""
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return {
+                    'hatched_eggs': set(data.get('hatched_eggs', [])),
+                    'eggs_hatched_by_user': data.get('eggs_hatched_by_user', {}),
+                    'user_eggs_hatched_by_others': data.get('user_eggs_hatched_by_others', {}),
+                    'egg_points': data.get('egg_points', {}),
+                    'completed_tasks': data.get('completed_tasks', {})
+                }
+        except Exception as e:
+            logger.error(f"Error loading data: {e}")
+            return get_default_data()
+    return get_default_data()
+
+# Функция для получения данных по умолчанию
+def get_default_data():
+    """Возвращает данные по умолчанию"""
+    return {
+        'hatched_eggs': set(),
+        'eggs_hatched_by_user': {},
+        'user_eggs_hatched_by_others': {},
+        'egg_points': {},
+        'completed_tasks': {}
+    }
+
+# Функция для сохранения данных в файл
+def save_data():
+    """Сохраняет данные в файл"""
+    try:
+        data = {
+            'hatched_eggs': list(hatched_eggs),
+            'eggs_hatched_by_user': eggs_hatched_by_user,
+            'user_eggs_hatched_by_others': user_eggs_hatched_by_others,
+            'egg_points': egg_points,
+            'completed_tasks': completed_tasks
+        }
+        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.info("Data saved successfully")
+    except Exception as e:
+        logger.error(f"Error saving data: {e}")
+
+# Загружаем данные при старте
+data = load_data()
+hatched_eggs = data['hatched_eggs']
+eggs_hatched_by_user = data['eggs_hatched_by_user']
+user_eggs_hatched_by_others = data['user_eggs_hatched_by_others']
+egg_points = data['egg_points']
+completed_tasks = data['completed_tasks']
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -236,6 +276,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # +2 очка отправителю, чье яйцо вылупили
     egg_points[sender_id] = egg_points.get(sender_id, 0) + 2
     
+    # Сохраняем данные после обновления
+    save_data()
+    
     await query.answer("🐣 Hatching egg...")
     
     logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
@@ -295,6 +338,9 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 if user_id not in completed_tasks:
                     completed_tasks[user_id] = {}
                 completed_tasks[user_id]['subscribed_to_cocoin'] = True
+                
+                # Сохраняем данные после обновления
+                save_data()
                 
                 logger.info(f"User {user_id} subscribed to Cocoin, earned 333 Egg points")
                 
@@ -388,6 +434,9 @@ async def check_subscription_api(request):
                     if user_id not in completed_tasks:
                         completed_tasks[user_id] = {}
                     completed_tasks[user_id]['subscribed_to_cocoin'] = True
+                    
+                    # Сохраняем данные после обновления
+                    save_data()
                     
                     subscribed = True
                     logger.info(f"User {user_id} is subscribed to Cocoin, earned 333 Egg points")
