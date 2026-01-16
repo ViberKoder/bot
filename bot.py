@@ -102,24 +102,26 @@ completed_tasks = data['completed_tasks']
 
 # Функция для проверки и обновления ежедневного лимита
 def check_daily_limit(user_id):
-    """Проверяет и обновляет ежедневный лимит отправленных яиц. Возвращает (can_send, daily_count)"""
+    """Проверяет и обновляет ежедневный лимит отправленных яиц. Возвращает (can_send, daily_count, total_limit)"""
     today = date.today().isoformat()
     
     # Получаем данные пользователя
     user_data = daily_eggs_sent.get(user_id, {})
     
-    # Если это новый день или первый раз, сбрасываем счетчик
+    # Если это новый день или первый раз, сбрасываем счетчик (но сохраняем оплаченные яйца для нового дня)
     if user_data.get('date') != today:
-        daily_eggs_sent[user_id] = {'date': today, 'count': 0}
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
         user_data = daily_eggs_sent[user_id]
     
     daily_count = user_data.get('count', 0)
+    paid_eggs = user_data.get('paid_eggs', 0)
+    total_limit = FREE_EGGS_PER_DAY + paid_eggs
     
     # Проверяем лимит
-    if daily_count < FREE_EGGS_PER_DAY:
-        return (True, daily_count)
+    if daily_count < total_limit:
+        return (True, daily_count, total_limit)
     else:
-        return (False, daily_count)
+        return (False, daily_count, total_limit)
 
 def increment_daily_count(user_id):
     """Увеличивает счетчик отправленных яиц за сегодня"""
@@ -127,9 +129,19 @@ def increment_daily_count(user_id):
     
     user_data = daily_eggs_sent.get(user_id, {})
     if user_data.get('date') != today:
-        daily_eggs_sent[user_id] = {'date': today, 'count': 1}
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
     else:
         daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
+
+def add_paid_eggs(user_id, amount):
+    """Добавляет оплаченные яйца к лимиту пользователя"""
+    today = date.today().isoformat()
+    
+    user_data = daily_eggs_sent.get(user_id, {})
+    if user_data.get('date') != today:
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': amount}
+    else:
+        daily_eggs_sent[user_id]['paid_eggs'] = user_data.get('paid_eggs', 0) + amount
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -209,27 +221,27 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     # Проверяем ежедневный лимит
-    can_send_free, daily_count = check_daily_limit(sender_id)
+    can_send_free, daily_count, total_limit = check_daily_limit(sender_id)
     
     if not can_send_free:
-        # Лимит превышен, показываем сообщение о необходимости оплаты
-        # Создаем специальный результат с информацией об оплате
-        payment_results = [
+        # Лимит превышен, отправляем крестик (❌) вместо яйца
+        # Крестик нельзя вылупить, поэтому не добавляем кнопку Hatch
+        locked_results = [
             InlineQueryResultArticle(
-                id="payment_required",
-                title="💳 Payment Required",
-                description=f"You've used {FREE_EGGS_PER_DAY} free eggs today. Pay {EGG_PRICE_STARS} Star to send one more egg.",
+                id=f"locked_{egg_id}",
+                title="❌ Locked Egg",
+                description=f"You've used all {total_limit} eggs today. Pay {EGG_PACK_PRICE_STARS} Stars for {EGG_PACK_SIZE} more eggs.",
                 input_message_content=InputTextMessageContent(
-                    message_text=f"💳 You've used all {FREE_EGGS_PER_DAY} free eggs today.\n\nTo send more eggs, please pay {EGG_PRICE_STARS} Telegram Star per egg.\n\nUse the button below to purchase.",
+                    message_text="❌",
                     parse_mode=ParseMode.HTML
                 ),
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"💳 Pay {EGG_PRICE_STARS} Star", callback_data=f"pay_egg_{sender_id}|{egg_id}")]
+                    [InlineKeyboardButton(f"💳 Buy {EGG_PACK_SIZE} eggs for {EGG_PACK_PRICE_STARS} Stars", callback_data=f"buy_eggs_{sender_id}")]
                 ])
             )
         ]
-        await update.inline_query.answer(payment_results, cache_time=1)
-        logger.info(f"User {sender_id} exceeded daily limit ({daily_count}/{FREE_EGGS_PER_DAY}), showing payment option")
+        await update.inline_query.answer(locked_results, cache_time=1)
+        logger.info(f"User {sender_id} exceeded daily limit ({daily_count}/{total_limit}), sending locked egg (❌)")
         return
     
     # Лимит не превышен, создаем результат с эмодзи яйца
