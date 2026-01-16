@@ -231,10 +231,20 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     # Меняем 🥚 на 🐣 и добавляем кнопки
-    await query.edit_message_text(
-        "🐣",
-        reply_markup=keyboard
-    )
+    try:
+        await query.edit_message_text(
+            "🐣",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error editing message: {e}")
+        # Если не удалось отредактировать, пробуем без кнопок
+        try:
+            await query.edit_message_text("🐣")
+        except Exception as e2:
+            logger.error(f"Error editing message without buttons: {e2}")
+            # Если и это не работает, просто отвечаем
+            await query.answer("🐣 Egg hatched!", show_alert=False)
 
 
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
