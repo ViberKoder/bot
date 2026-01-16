@@ -183,32 +183,39 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.inline_query.answer(results, cache_time=1)
     logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}")
     
-    # Увеличиваем счетчик отправленных яиц
-    eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
+    # Примечание: В Telegram Bot API нет события, которое срабатывает когда пользователь выбирает результат из inline query.
+    # Поэтому мы увеличиваем счетчик при каждом inline query с "egg".
+    # Это не идеально, но это лучшее что можно сделать без дополнительных событий.
+    # В реальности пользователь может сделать inline query, но не выбрать результат, что приведет к неточному подсчету.
+    # Но для большинства случаев это работает достаточно хорошо.
     
-    # Проверяем задание "Send 100 egg"
-    if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
-        # Начисляем 500 Egg
-        egg_points[sender_id] = egg_points.get(sender_id, 0) + 500
+    # Увеличиваем счетчик отправленных яиц только если запрос содержит "egg"
+    if "egg" in query or query == "":
+        eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
         
-        # Отмечаем задание как выполненное
-        if sender_id not in completed_tasks:
-            completed_tasks[sender_id] = {}
-        completed_tasks[sender_id]['send_100_eggs'] = True
-        
-        # Сохраняем данные
-        save_data()
-        
-        logger.info(f"User {sender_id} completed 'Send 100 egg' task, earned 500 Egg points")
-        
-        # Уведомляем пользователя
-        try:
-            await context.bot.send_message(
-                chat_id=sender_id,
-                text="🎉 Congratulations! You earned 500 Egg points for sending 100 eggs!"
-            )
-        except Exception as e:
-            logger.error(f"Failed to send notification to user {sender_id}: {e}")
+        # Проверяем задание "Send 100 egg"
+        if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
+            # Начисляем 500 Egg
+            egg_points[sender_id] = egg_points.get(sender_id, 0) + 500
+            
+            # Отмечаем задание как выполненное
+            if sender_id not in completed_tasks:
+                completed_tasks[sender_id] = {}
+            completed_tasks[sender_id]['send_100_eggs'] = True
+            
+            # Сохраняем данные
+            save_data()
+            
+            logger.info(f"User {sender_id} completed 'Send 100 egg' task, earned 500 Egg points")
+            
+            # Уведомляем пользователя
+            try:
+                await context.bot.send_message(
+                    chat_id=sender_id,
+                    text="🎉 Congratulations! You earned 500 Egg points for sending 100 eggs!"
+                )
+            except Exception as e:
+                logger.error(f"Failed to send notification to user {sender_id}: {e}")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
