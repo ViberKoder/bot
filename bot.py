@@ -216,10 +216,38 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )]
     ])
     
-    await query.edit_message_text(
-        "🐣",
-        reply_markup=keyboard
-    )
+    # Пытаемся изменить сообщение
+    try:
+        # Проверяем тип сообщения
+        if query.message.text:
+            # Это текстовое сообщение
+            await query.edit_message_text(
+                "🐣",
+                reply_markup=keyboard
+            )
+        elif query.message.caption:
+            # Это сообщение с подписью (например, фото со стикером)
+            await query.edit_message_caption(
+                caption="🐣",
+                reply_markup=keyboard
+            )
+        else:
+            # Если не можем определить тип, пробуем edit_message_text
+            await query.edit_message_text(
+                "🐣",
+                reply_markup=keyboard
+            )
+        logger.info(f"Successfully updated message to hatched egg")
+    except Exception as e:
+        logger.error(f"Error updating message: {e}")
+        # Пробуем отправить новое сообщение как fallback
+        try:
+            await query.message.reply_text(
+                "🐣",
+                reply_markup=keyboard
+            )
+        except Exception as e2:
+            logger.error(f"Error sending new message: {e2}")
 
 
 async def stats_api(request):
