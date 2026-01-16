@@ -207,7 +207,31 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🥚 Hatch", callback_data=callback_data)]
     ])
     
-    # Создаем результат с эмодзи яйца
+    # Проверяем ежедневный лимит
+    can_send_free, daily_count = check_daily_limit(sender_id)
+    
+    if not can_send_free:
+        # Лимит превышен, показываем сообщение о необходимости оплаты
+        # Создаем специальный результат с информацией об оплате
+        payment_results = [
+            InlineQueryResultArticle(
+                id="payment_required",
+                title="💳 Payment Required",
+                description=f"You've used {FREE_EGGS_PER_DAY} free eggs today. Pay {EGG_PRICE_STARS} Star to send one more egg.",
+                input_message_content=InputTextMessageContent(
+                    message_text=f"💳 You've used all {FREE_EGGS_PER_DAY} free eggs today.\n\nTo send more eggs, please pay {EGG_PRICE_STARS} Telegram Star per egg.\n\nUse the button below to purchase.",
+                    parse_mode=ParseMode.HTML
+                ),
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(f"💳 Pay {EGG_PRICE_STARS} Star", callback_data=f"pay_egg_{sender_id}|{egg_id}")]
+                ])
+            )
+        ]
+        await update.inline_query.answer(payment_results, cache_time=1)
+        logger.info(f"User {sender_id} exceeded daily limit ({daily_count}/{FREE_EGGS_PER_DAY}), showing payment option")
+        return
+    
+    # Лимит не превышен, создаем результат с эмодзи яйца
     results = [
         InlineQueryResultArticle(
             id=egg_id,
@@ -224,15 +248,13 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.inline_query.answer(results, cache_time=1)
     logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}")
     
-    # Примечание: В Telegram Bot API нет события, которое срабатывает когда пользователь выбирает результат из inline query.
-    # Поэтому мы увеличиваем счетчик при каждом inline query с "egg".
-    # Это не идеально, но это лучшее что можно сделать без дополнительных событий.
-    # В реальности пользователь может сделать inline query, но не выбрать результат, что приведет к неточному подсчету.
-    # Но для большинства случаев это работает достаточно хорошо.
-    
-    # Увеличиваем счетчик отправленных яиц только если запрос содержит "egg"
+    # Увеличиваем счетчики только если запрос содержит "egg" или пустой
     if "egg" in query or query == "":
+        # Увеличиваем общий счетчик
         eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
+        
+        # Увеличиваем ежедневный счетчик
+        increment_daily_count(sender_id)
         
         # Проверяем задание "Send 100 egg"
         if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
@@ -257,6 +279,8 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logger.error(f"Failed to send notification to user {sender_id}: {e}")
+        
+        save_data()
 
 
 async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
