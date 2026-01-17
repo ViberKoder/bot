@@ -344,8 +344,14 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.inline_query.answer(results, cache_time=1)
     logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}, can_send: {can_send_free}, daily_count: {daily_count}, total_limit: {total_limit}")
     
-    # НЕ увеличиваем счетчики здесь - они увеличиваются только когда яйцо реально отправлено (в button_callback)
-    # Счетчики увеличиваются только когда пользователь нажимает кнопку "Hatch" и яйцо вылупляется
+    # Увеличиваем счетчики когда яйцо отправлено через inline query
+    # В Telegram inline query, яйцо считается отправленным когда пользователь выбирает его из результатов
+    if "egg" in query or query == "":
+        # Увеличиваем общий счетчик отправленных яиц
+        eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
+        
+        # Увеличиваем ежедневный счетчик
+        increment_daily_count(sender_id)
         
         # Проверяем задание "Send 100 egg"
         if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
