@@ -34,8 +34,8 @@ if not BOT_TOKEN:
 # Файл для сохранения данных
 DATA_FILE = "bot_data.json"
 
-# ID канала Cocoin
-COCOIN_CHANNEL = "@cocoin"
+# ID канала Hatch Egg
+HATCH_EGG_CHANNEL = "@hatch_egg"
 
 # Лимиты
 FREE_EGGS_PER_DAY = 10
@@ -580,14 +580,14 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.chat_member.from_user
     new_status = update.chat_member.new_chat_member.status
     
-    # Проверяем, что это канал Cocoin
-    if chat.username and chat.username.lower() == "cocoin":
+    # Проверяем, что это канал Hatch Egg
+    if chat.username and chat.username.lower() == "hatch_egg":
         user_id = user.id
         
         # Если пользователь подписался (стал MEMBER или не LEFT/KICKED)
         if new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
             # Проверяем, не получал ли уже награду
-            if not completed_tasks.get(user_id, {}).get('subscribed_to_cocoin', False):
+            if not completed_tasks.get(user_id, {}).get('subscribed_to_hatch_egg', False):
                 # Начисляем 20 Eggs (available eggs to send)
                 today = date.today().isoformat()
                 user_data = daily_eggs_sent.get(user_id, {})
@@ -599,18 +599,18 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Отмечаем задание как выполненное
                 if user_id not in completed_tasks:
                     completed_tasks[user_id] = {}
-                completed_tasks[user_id]['subscribed_to_cocoin'] = True
+                completed_tasks[user_id]['subscribed_to_hatch_egg'] = True
                 
                 # Сохраняем данные после обновления
                 save_data()
                 
-                logger.info(f"User {user_id} subscribed to Cocoin, earned 20 Eggs")
+                logger.info(f"User {user_id} subscribed to Hatch Egg, earned 20 Eggs")
                 
                 # Уведомляем пользователя
                 try:
                     await context.bot.send_message(
                         chat_id=user_id,
-                        text="🎉 Congratulations! You earned 20 Eggs for subscribing to @cocoin!"
+                        text="🎉 Congratulations! You earned 20 Eggs for subscribing to @hatch_egg!"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send notification to user {user_id}: {e}")
@@ -717,13 +717,13 @@ async def check_subscription_api(request):
     
     # Проверяем подписку через Telegram API
     try:
-        subscribed = completed_tasks.get(user_id, {}).get('subscribed_to_cocoin', False)
+        subscribed = completed_tasks.get(user_id, {}).get('subscribed_to_hatch_egg', False)
         
         # Если еще не отмечено как выполненное, проверяем через API
         if not subscribed and bot_application:
             try:
                 chat_member = await bot_application.bot.get_chat_member(
-                    chat_id=COCOIN_CHANNEL,
+                    chat_id=HATCH_EGG_CHANNEL,
                     user_id=user_id
                 )
                 
@@ -740,13 +740,13 @@ async def check_subscription_api(request):
                     # Отмечаем задание как выполненное
                     if user_id not in completed_tasks:
                         completed_tasks[user_id] = {}
-                    completed_tasks[user_id]['subscribed_to_cocoin'] = True
+                    completed_tasks[user_id]['subscribed_to_hatch_egg'] = True
                     
                     # Сохраняем данные после обновления
                     save_data()
                     
                     subscribed = True
-                    logger.info(f"User {user_id} is subscribed to Cocoin, earned 20 Eggs")
+                    logger.info(f"User {user_id} is subscribed to Hatch Egg, earned 20 Eggs")
             except Exception as e:
                 logger.error(f"Error checking chat member: {e}")
                 # Если пользователь не найден или не подписан, subscribed остается False
