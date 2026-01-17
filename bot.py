@@ -728,8 +728,10 @@ async def check_subscription_api(request):
         # Если еще не отмечено как выполненное, проверяем через API
         if not subscribed and bot_application:
             try:
+                # Используем правильный формат для канала
+                channel_id = HATCH_EGG_CHANNEL if HATCH_EGG_CHANNEL.startswith('@') else f'@{HATCH_EGG_CHANNEL}' if not HATCH_EGG_CHANNEL.startswith('-') else HATCH_EGG_CHANNEL
                 chat_member = await bot_application.bot.get_chat_member(
-                    chat_id=HATCH_EGG_CHANNEL,
+                    chat_id=channel_id,
                     user_id=user_id
                 )
                 
