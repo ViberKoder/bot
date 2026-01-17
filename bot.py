@@ -126,23 +126,21 @@ eggs_detail = data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatch
 
 # Функция для проверки и обновления ежедневного лимита
 def check_daily_limit(user_id):
-    """Проверяет и обновляет ежедневный лимит отправленных яиц. Возвращает (can_send, daily_count, total_limit)"""
+    """Проверяет, может ли пользователь отправить яйцо сегодня"""
     today = date.today().isoformat()
-    
-    # Получаем данные пользователя
     user_data = daily_eggs_sent.get(user_id, {})
-    
-    # Если это новый день или первый раз, инициализируем счетчик (но сохраняем оплаченные яйца)
-    if not user_data or user_data.get('date') != today:
+
+    # Если это новый день или первый раз, сбрасываем счетчик (но сохраняем оплаченные яйца для нового дня)
+    if user_data.get('date') != today:
         # Сохраняем paid_eggs при инициализации нового дня
-        old_paid_eggs = user_data.get('paid_eggs', 0) if user_data else 0
+        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
         daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
         user_data = daily_eggs_sent[user_id]
-    
+
     daily_count = user_data.get('count', 0)
     paid_eggs = user_data.get('paid_eggs', 0)
     total_limit = FREE_EGGS_PER_DAY + paid_eggs
-    
+
     # Проверяем лимит
     if daily_count < total_limit:
         return (True, daily_count, total_limit)
@@ -152,19 +150,14 @@ def check_daily_limit(user_id):
 def increment_daily_count(user_id):
     """Увеличивает счетчик отправленных яиц за сегодня"""
     today = date.today().isoformat()
-    
+
     user_data = daily_eggs_sent.get(user_id, {})
-    # Если это новый день или первый раз, инициализируем счетчик
-    if not user_data or user_data.get('date') != today:
+    if user_data.get('date') != today:
         # Сохраняем paid_eggs при инициализации нового дня
-        old_paid_eggs = user_data.get('paid_eggs', 0) if user_data else 0
+        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
         daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
-        user_data = daily_eggs_sent[user_id]
-    
-    # Увеличиваем счетчик
-    daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
-    # Сохраняем данные сразу
-    save_data()
+    else:
+        daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
 
 def add_paid_eggs(user_id, amount):
     """Добавляет оплаченные яйца к лимиту пользователя"""
