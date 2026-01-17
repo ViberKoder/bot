@@ -167,7 +167,8 @@ def add_paid_eggs(user_id, amount):
     
     user_data = daily_eggs_sent.get(user_id, {})
     if user_data.get('date') != today:
-        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': amount}
+        old_paid_eggs = user_data.get('paid_eggs', 0)
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs + amount}
     else:
         daily_eggs_sent[user_id]['paid_eggs'] = user_data.get('paid_eggs', 0) + amount
 
