@@ -595,8 +595,8 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 user_data = daily_eggs_sent.get(user_id, {})
                 if user_data.get('date') != today:
                     # Сохраняем paid_eggs при инициализации нового дня
-        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
-        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
+                    old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+                    daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
                     user_data = daily_eggs_sent[user_id]
                 user_data['paid_eggs'] = user_data.get('paid_eggs', 0) + 20
                 
