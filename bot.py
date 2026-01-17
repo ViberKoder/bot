@@ -478,22 +478,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем задание "Hatch 100 egg"
     hatched_count = eggs_hatched_by_user.get(clicker_id, 0)
-    if hatched_count >= 100 and not completed_tasks.get(clicker_id, {}).get('hatch_100_eggs', False):
-        # Начисляем 500 Egg
-        egg_points[clicker_id] = egg_points.get(clicker_id, 0) + 500
+    if hatched_count >= 333 and not completed_tasks.get(clicker_id, {}).get('hatch_333_eggs', False):
+        # Начисляем 100 Egg
+        egg_points[clicker_id] = egg_points.get(clicker_id, 0) + 100
         
         # Отмечаем задание как выполненное
         if clicker_id not in completed_tasks:
             completed_tasks[clicker_id] = {}
-        completed_tasks[clicker_id]['hatch_100_eggs'] = True
+        completed_tasks[clicker_id]['hatch_333_eggs'] = True
         
-        logger.info(f"User {clicker_id} completed 'Hatch 100 egg' task, earned 500 Egg points")
+        logger.info(f"User {clicker_id} completed 'Hatch 333 egg' task, earned 100 Egg points")
         
         # Уведомляем пользователя
         try:
             await context.bot.send_message(
                 chat_id=clicker_id,
-                text="🎉 Congratulations! You earned 500 Egg points for hatching 100 eggs!"
+                text="🎉 Congratulations! You earned 100 Egg points for hatching 333 eggs!"
             )
         except Exception as e:
             logger.error(f"Failed to send notification to user {clicker_id}: {e}")
@@ -553,8 +553,8 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
             # Проверяем, не получал ли уже награду
             if not completed_tasks.get(user_id, {}).get('subscribed_to_cocoin', False):
-                # Начисляем 333 Egg
-                egg_points[user_id] = egg_points.get(user_id, 0) + 333
+                # Начисляем 100 Egg
+                egg_points[user_id] = egg_points.get(user_id, 0) + 100
                 
                 # Отмечаем задание как выполненное
                 if user_id not in completed_tasks:
@@ -564,7 +564,7 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Сохраняем данные после обновления
                 save_data()
                 
-                logger.info(f"User {user_id} subscribed to Cocoin, earned 333 Egg points")
+                logger.info(f"User {user_id} subscribed to Cocoin, earned 100 Egg points")
                 
                 # Уведомляем пользователя
                 try:
@@ -604,14 +604,20 @@ async def stats_api(request):
     referral_earned = referral_earnings.get(user_id, 0)
     referrer_id = referrers.get(user_id)
     
+    # Count referrals (users who have this user as referrer)
+    referrals_count = sum(1 for ref_user_id, ref_referrer_id in referrers.items() if ref_referrer_id == user_id)
+    
     return web.json_response(
         {
             'hatched_by_me': hatched_count,
             'my_eggs_hatched': my_eggs_hatched,
             'eggs_sent': sent_count,
             'egg_points': points,
+            'hatch_points': hatched_count,  # Hatch points = вылупленные яйца
             'tasks': tasks,
             'referral_earned': referral_earned,
+            'referral_earnings': referral_earned,  # Alias for compatibility
+            'referrals_count': referrals_count,
             'has_referrer': referrer_id is not None
         },
         headers={'Access-Control-Allow-Origin': '*'}
@@ -655,8 +661,8 @@ async def check_subscription_api(request):
                 
                 # Проверяем, что пользователь подписан
                 if chat_member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-                    # Начисляем 333 Egg
-                    egg_points[user_id] = egg_points.get(user_id, 0) + 333
+                    # Начисляем 100 Egg
+                    egg_points[user_id] = egg_points.get(user_id, 0) + 100
                     
                     # Отмечаем задание как выполненное
                     if user_id not in completed_tasks:
