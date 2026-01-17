@@ -39,9 +39,9 @@ COCOIN_CHANNEL = "@cocoin"
 # Лимиты
 FREE_EGGS_PER_DAY = 10
 EGG_PACK_SIZE = 10  # Количество яиц в пакете
-TON_PRICE_PER_PACK = 0.1  # 0.1 TON за 10 яиц
+TON_PRICE_PER_PACK = 0.15  # 0.15 TON за 10 яиц
 TON_WALLET = "UQCHdlQ2TLpa6Kpu5Pu8HeJd1xe3EL1Kx2wFekeuOnSpFcP0"  # TON кошелек для оплаты
-MINI_APP_URL = "https://hatch-ruddy.vercel.app"  # URL mini app
+MINI_APP_URL = "https://hatchapp-xi.vercel.app"  # URL mini app
 REFERRAL_PERCENTAGE = 0.25  # 25% от поинтов реферала
 
 # Функция для загрузки данных из файла
@@ -560,8 +560,13 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         if new_status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
             # Проверяем, не получал ли уже награду
             if not completed_tasks.get(user_id, {}).get('subscribed_to_cocoin', False):
-                # Начисляем 100 Egg
-                egg_points[user_id] = egg_points.get(user_id, 0) + 100
+                # Начисляем 20 Eggs (available eggs to send)
+                today = date.today().isoformat()
+                user_data = daily_eggs_sent.get(user_id, {})
+                if user_data.get('date') != today:
+                    daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
+                    user_data = daily_eggs_sent[user_id]
+                user_data['paid_eggs'] = user_data.get('paid_eggs', 0) + 20
                 
                 # Отмечаем задание как выполненное
                 if user_id not in completed_tasks:
@@ -571,13 +576,13 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Сохраняем данные после обновления
                 save_data()
                 
-                logger.info(f"User {user_id} subscribed to Cocoin, earned 100 Egg points")
+                logger.info(f"User {user_id} subscribed to Cocoin, earned 20 Eggs")
                 
                 # Уведомляем пользователя
                 try:
                     await context.bot.send_message(
                         chat_id=user_id,
-                        text="🎉 Congratulations! You earned 333 Egg points for subscribing to @cocoin!"
+                        text="🎉 Congratulations! You earned 20 Eggs for subscribing to @cocoin!"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send notification to user {user_id}: {e}")
@@ -684,8 +689,13 @@ async def check_subscription_api(request):
                 
                 # Проверяем, что пользователь подписан
                 if chat_member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-                    # Начисляем 100 Egg
-                    egg_points[user_id] = egg_points.get(user_id, 0) + 100
+                    # Начисляем 20 Eggs (available eggs to send)
+                    today = date.today().isoformat()
+                    user_data = daily_eggs_sent.get(user_id, {})
+                    if user_data.get('date') != today:
+                        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
+                        user_data = daily_eggs_sent[user_id]
+                    user_data['paid_eggs'] = user_data.get('paid_eggs', 0) + 20
                     
                     # Отмечаем задание как выполненное
                     if user_id not in completed_tasks:
@@ -696,7 +706,7 @@ async def check_subscription_api(request):
                     save_data()
                     
                     subscribed = True
-                    logger.info(f"User {user_id} is subscribed to Cocoin, earned 333 Egg points")
+                    logger.info(f"User {user_id} is subscribed to Cocoin, earned 20 Eggs")
             except Exception as e:
                 logger.error(f"Error checking chat member: {e}")
                 # Если пользователь не найден или не подписан, subscribed остается False
@@ -758,20 +768,20 @@ async def verify_ton_payment_api(request):
             headers={'Access-Control-Allow-Origin': '*'}
         )
     
-    # Вычисляем количество яиц на основе суммы (10 яиц = 0.1 TON)
+    # Вычисляем количество яиц на основе суммы (10 яиц = 0.15 TON)
     eggs_to_add = int((amount / TON_PRICE_PER_PACK) * EGG_PACK_SIZE)
     
     # Проверяем, что количество яиц в допустимом диапазоне (10-1000)
     if eggs_to_add < 10:
         return web.json_response(
-            {'error': 'insufficient amount', 'required': TON_PRICE_PER_PACK, 'message': 'Minimum purchase is 10 eggs (0.1 TON)'}, 
+            {'error': 'insufficient amount', 'required': TON_PRICE_PER_PACK, 'message': f'Minimum purchase is 10 eggs ({TON_PRICE_PER_PACK} TON)'}, 
             status=400,
             headers={'Access-Control-Allow-Origin': '*'}
         )
     
     if eggs_to_add > 1000:
         return web.json_response(
-            {'error': 'too many eggs', 'max': 1000, 'message': 'Maximum purchase is 1000 eggs (10 TON)'}, 
+            {'error': 'too many eggs', 'max': 1000, 'message': 'Maximum purchase is 1000 eggs (15 TON)'}, 
             status=400,
             headers={'Access-Control-Allow-Origin': '*'}
         )
