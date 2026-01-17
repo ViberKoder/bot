@@ -55,6 +55,9 @@ def load_data():
     if os.path.exists(DATA_FILE):
         file_size = os.path.getsize(DATA_FILE)
         logger.info(f"Data file size: {file_size} bytes")
+    if os.path.exists(DATA_FILE):
+        file_size = os.path.getsize(DATA_FILE)
+        logger.info(f"Data file size: {file_size} bytes")
     
     if os.path.exists(DATA_FILE):
         try:
@@ -494,7 +497,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Когда кто-то открывает яйцо, он становится рефералом того, кто отправил яйцо
     if clicker_id not in referrers and sender_id != clicker_id:
         referrers[clicker_id] = sender_id
-        logger.info(f"User {clicker_id} became referral of {sender_id}")
+        logger.info(f"User {clicker_id} became referral of {sender_id} (total referrers now: {len(referrers)})")
     
     # Обновляем статистику
     # Увеличиваем счетчик для того, кто вылупил
@@ -505,11 +508,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Начисляем поинты Egg
     # +1 очко тому, кто вылупил чужое яйцо
     clicker_points = 1
-    egg_points[clicker_id] = egg_points.get(clicker_id, 0) + clicker_points
+    old_clicker_points = egg_points.get(clicker_id, 0)
+    egg_points[clicker_id] = old_clicker_points + clicker_points
+    logger.info(f"User {clicker_id} earned {clicker_points} points (total: {egg_points[clicker_id]})")
     
     # +2 очка отправителю, чье яйцо вылупили
     sender_points = 2
-    egg_points[sender_id] = egg_points.get(sender_id, 0) + sender_points
+    old_sender_points = egg_points.get(sender_id, 0)
+    egg_points[sender_id] = old_sender_points + sender_points
+    logger.info(f"User {sender_id} earned {sender_points} points (total: {egg_points[sender_id]})")
     
     # РЕФЕРАЛЬНАЯ СИСТЕМА: Рефовод получает 25% от поинтов реферала
     # Когда реферал зарабатывает поинты, его рефовод получает 25% от этих поинтов
