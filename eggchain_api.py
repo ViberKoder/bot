@@ -19,20 +19,30 @@ def set_bot_instance(bot):
 async def get_user_info(user_id):
     """Получает информацию о пользователе из Telegram"""
     if not bot_instance:
-        return None, None
+        return None, None, None
     
     try:
         user = await bot_instance.get_chat(user_id)
         username = user.username if hasattr(user, 'username') and user.username else None
-        # Получаем фото профиля
-        photos = await bot_instance.get_user_profile_photos(user_id, limit=1)
-        avatar_file_id = None
-        if photos and photos.total_count > 0:
-            avatar_file_id = photos.photos[0][0].file_id
+        first_name = user.first_name if hasattr(user, 'first_name') else None
         
-        return username, avatar_file_id
+        # Получаем фото профиля
+        avatar_file_id = None
+        avatar_url = None
+        try:
+            photos = await bot_instance.get_user_profile_photos(user_id, limit=1)
+            if photos and photos.total_count > 0:
+                avatar_file_id = photos.photos[0][0].file_id
+                # Получаем URL файла
+                file = await bot_instance.get_file(avatar_file_id)
+                # Формируем полный URL для доступа к файлу
+                avatar_url = f"https://api.telegram.org/file/bot{bot_instance.token}/{file.file_path}"
+        except:
+            pass
+        
+        return username, avatar_file_id, avatar_url
     except Exception as e:
-        return None, None
+        return None, None, None
 
 # Путь к файлу данных (должен совпадать с bot.py)
 DATA_FILE = os.getenv('DATA_FILE', 'bot_data.json')
