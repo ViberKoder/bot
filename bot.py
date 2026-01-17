@@ -171,6 +171,15 @@ referral_earnings = data.get('referral_earnings', {})  # {referrer_id: total_ear
 ton_payments = data.get('ton_payments', {})  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
 eggs_detail = data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched}}
 
+# Логируем загруженные данные при старте
+logger.info(f"Bot started with data: {len(egg_points)} users with points, {len(referrers)} referrers, {len(eggs_detail)} eggs in detail")
+if len(egg_points) > 0:
+    sample_user = list(egg_points.keys())[0]
+    logger.info(f"Sample user {sample_user} has {egg_points[sample_user]} points")
+if len(referrers) > 0:
+    sample_ref = list(referrers.items())[0]
+    logger.info(f"Sample referral: user {sample_ref[0]} referred by {sample_ref[1]}")
+
 # Функция для проверки и обновления ежедневного лимита
 def check_daily_limit(user_id):
     """Проверяет, может ли пользователь отправить яйцо сегодня"""
