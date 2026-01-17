@@ -760,6 +760,14 @@ async def check_subscription_api(request):
             except Exception as e:
                 logger.error(f"Error checking chat member: {e}")
                 # Если пользователь не найден или не подписан, subscribed остается False
+                # Логируем ошибку, но не прерываем выполнение
+                error_msg = str(e).lower()
+                if "chat not found" in error_msg or "bot is not a member" in error_msg:
+                    logger.error(f"Cannot check subscription - bot may not be added to channel: {e}")
+                elif "user not found" in error_msg:
+                    logger.warning(f"User {user_id} not found in channel: {e}")
+                else:
+                    logger.error(f"Unexpected error checking subscription: {e}")
         
         return web.json_response(
             {
