@@ -727,10 +727,8 @@ async def check_subscription_api(request):
         # Если еще не отмечено как выполненное, проверяем через API
         if not subscribed and bot_application:
             try:
-                # Используем правильный формат для канала
-                channel_id = HATCH_EGG_CHANNEL if HATCH_EGG_CHANNEL.startswith('@') else f'@{HATCH_EGG_CHANNEL}' if not HATCH_EGG_CHANNEL.startswith('-') else HATCH_EGG_CHANNEL
                 chat_member = await bot_application.bot.get_chat_member(
-                    chat_id=channel_id,
+                    chat_id=HATCH_EGG_CHANNEL,
                     user_id=user_id
                 )
                 
@@ -759,14 +757,6 @@ async def check_subscription_api(request):
             except Exception as e:
                 logger.error(f"Error checking chat member: {e}")
                 # Если пользователь не найден или не подписан, subscribed остается False
-                # Логируем ошибку, но не прерываем выполнение
-                error_msg = str(e).lower()
-                if "chat not found" in error_msg or "bot is not a member" in error_msg:
-                    logger.error(f"Cannot check subscription - bot may not be added to channel: {e}")
-                elif "user not found" in error_msg:
-                    logger.warning(f"User {user_id} not found in channel: {e}")
-                else:
-                    logger.error(f"Unexpected error checking subscription: {e}")
         
         return web.json_response(
             {
