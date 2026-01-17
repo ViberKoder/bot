@@ -271,6 +271,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not can_send_free:
         # Лимит превышен, отправляем крестик (❌) вместо яйца
         # Крестик нельзя вылупить, поэтому не добавляем кнопку Hatch
+        # Кнопка сразу открывает Web App с TON Connect для оплаты
         locked_results = [
             InlineQueryResultArticle(
                 id=f"locked_{egg_id}",
@@ -282,8 +283,8 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
-                        f"💳 Pay {TON_PRICE_PER_PACK} TON for {EGG_PACK_SIZE} eggs",
-                        callback_data=f"pay_ton_{sender_id}"
+                        f"💎 Connect & Pay {TON_PRICE_PER_PACK} TON",
+                        web_app=WebAppInfo(url=f"{MINI_APP_URL}/ton-pay.html?user_id={sender_id}&amount={TON_PRICE_PER_PACK}")
                     )]
                 ])
             )
@@ -349,36 +350,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     logger.info(f"Button callback received: {query.data}")
-    
-    # Обработка оплаты TON
-    if query.data.startswith("pay_ton_"):
-        user_id = query.from_user.id
-        data_part = query.data[8:]  # Убираем "pay_ton_"
-        
-        try:
-            sender_id = int(data_part)
-            
-            # Проверяем, что пользователь оплачивает для себя
-            if user_id != sender_id:
-                await query.answer("❌ Error: Invalid payment request", show_alert=True)
-                return
-            
-            # Создаем Web App для TON Connect
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "💎 Connect TON Wallet & Pay",
-                    web_app=WebAppInfo(url=f"{MINI_APP_URL}/ton-pay.html?user_id={user_id}&amount={TON_PRICE_PER_PACK}")
-                )]
-            ])
-            
-            await query.answer("💳 Opening payment...")
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"💳 Pay {TON_PRICE_PER_PACK} TON for {EGG_PACK_SIZE} eggs\n\n"
-                     f"Click the button below to connect your TON wallet and pay.",
-                reply_markup=keyboard
-            )
-            return
     
     # Получаем ID пользователя, который нажал на кнопку
     clicker_id = query.from_user.id
