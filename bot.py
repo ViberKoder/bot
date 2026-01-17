@@ -132,10 +132,10 @@ def check_daily_limit(user_id):
     # Получаем данные пользователя
     user_data = daily_eggs_sent.get(user_id, {})
     
-    # Если это новый день или первый раз, сбрасываем счетчик (но сохраняем оплаченные яйца для нового дня)
-    if user_data.get('date') != today:
+    # Если это новый день или первый раз, инициализируем счетчик (но сохраняем оплаченные яйца)
+    if not user_data or user_data.get('date') != today:
         # Сохраняем paid_eggs при инициализации нового дня
-        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+        old_paid_eggs = user_data.get('paid_eggs', 0) if user_data else 0
         daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
         user_data = daily_eggs_sent[user_id]
     
