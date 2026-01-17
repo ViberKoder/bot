@@ -52,6 +52,9 @@ def load_data():
     logger.info(f"Loading data from: {DATA_FILE}")
     logger.info(f"Current working directory: {os.getcwd()}")
     logger.info(f"File exists: {os.path.exists(DATA_FILE)}")
+    if os.path.exists(DATA_FILE):
+        file_size = os.path.getsize(DATA_FILE)
+        logger.info(f"Data file size: {file_size} bytes")
     
     if os.path.exists(DATA_FILE):
         try:
@@ -554,7 +557,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Failed to send notification to user {clicker_id}: {e}")
     
     # Сохраняем данные после обновления
+    logger.info(f"Before save: {len(egg_points)} users with points, {len(referrers)} referrers")
     save_data()
+    logger.info(f"After save: {len(egg_points)} users with points, {len(referrers)} referrers")
     
     await query.answer("🐣 Hatching egg...")
     
