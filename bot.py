@@ -4,10 +4,9 @@ from telegram import (
     InputTextMessageContent, 
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
-    Update,
-    LabeledPrice
+    Update
 )
-from telegram.ext import Application, CommandHandler, InlineQueryHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, PreCheckoutQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, InlineQueryHandler, CallbackQueryHandler, ContextTypes, ChatMemberHandler, MessageHandler, filters
 from telegram.constants import ChatMemberStatus
 from telegram.constants import ParseMode
 import uuid
@@ -34,8 +33,11 @@ COCOIN_CHANNEL = "@cocoin"
 
 # Лимиты
 FREE_EGGS_PER_DAY = 10
-EGG_PACK_PRICE_STARS = 10  # 10 яиц = 10 Stars
 EGG_PACK_SIZE = 10  # Количество яиц в пакете
+TON_PRICE_PER_PACK = 0.1  # 0.1 TON за 10 яиц
+TON_WALLET = "UQCHdlQ2TLpa6Kpu5Pu8HeJd1xe3EL1Kx2wFekeuOnSpFcP0"  # TON кошелек для оплаты
+MINI_APP_URL = "https://hatch-ruddy.vercel.app"  # URL mini app
+REFERRAL_PERCENTAGE = 0.25  # 25% от поинтов реферала
 
 # Функция для загрузки данных из файла
 def load_data():
@@ -51,7 +53,10 @@ def load_data():
                     'eggs_sent_by_user': data.get('eggs_sent_by_user', {}),
                     'daily_eggs_sent': data.get('daily_eggs_sent', {}),  # {user_id: {'date': '2024-01-01', 'count': 5}}
                     'egg_points': data.get('egg_points', {}),
-                    'completed_tasks': data.get('completed_tasks', {})
+                    'completed_tasks': data.get('completed_tasks', {}),
+                    'referrers': data.get('referrers', {}),  # {user_id: referrer_id} - кто привел пользователя
+                    'referral_earnings': data.get('referral_earnings', {}),  # {referrer_id: total_earned} - сколько заработал рефовод
+                    'ton_payments': data.get('ton_payments', {})  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
                 }
         except Exception as e:
             logger.error(f"Error loading data: {e}")
@@ -68,7 +73,10 @@ def get_default_data():
         'eggs_sent_by_user': {},
         'daily_eggs_sent': {},
         'egg_points': {},
-        'completed_tasks': {}
+        'completed_tasks': {},
+        'referrers': {},
+        'referral_earnings': {},
+        'ton_payments': {}
     }
 
 # Функция для сохранения данных в файл
@@ -82,7 +90,10 @@ def save_data():
             'eggs_sent_by_user': eggs_sent_by_user,
             'daily_eggs_sent': daily_eggs_sent,
             'egg_points': egg_points,
-            'completed_tasks': completed_tasks
+            'completed_tasks': completed_tasks,
+            'referrers': referrers,
+            'referral_earnings': referral_earnings,
+            'ton_payments': ton_payments
         }
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -99,6 +110,9 @@ eggs_sent_by_user = data.get('eggs_sent_by_user', {})
 daily_eggs_sent = data.get('daily_eggs_sent', {})
 egg_points = data['egg_points']
 completed_tasks = data['completed_tasks']
+referrers = data.get('referrers', {})  # {user_id: referrer_id}
+referral_earnings = data.get('referral_earnings', {})  # {referrer_id: total_earned}
+ton_payments = data.get('ton_payments', {})  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
 
 # Функция для проверки и обновления ежедневного лимита
 def check_daily_limit(user_id):
@@ -173,6 +187,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /reset_all - обнуляет все поинты и счетчики яиц"""
+    user_id = update.message.from_user.id
+    
+    # Обнуляем все поинты
+    egg_points.clear()
+    
+    # Обнуляем счетчики отправленных яиц
+    eggs_sent_by_user.clear()
+    daily_eggs_sent.clear()
+    
+    # Обнуляем реферальные заработки
+    referral_earnings.clear()
+    
+    # Сохраняем изменения
+    save_data()
+    
+    logger.info(f"User {user_id} reset all points and egg counters")
+    
+    await update.message.reply_text(
+        "✅ Все поинты и счетчики яиц обнулены!\n\n"
+        "Обнулено:\n"
+        "• Все Egg поинты\n"
+        "• Счетчики отправленных яиц\n"
+        "• Реферальные заработки\n\n"
+        "Статистика вылупления и реферальная система сохранены."
+    )
+
+
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline запросов"""
     query = update.inline_query.query.lower().strip()
@@ -195,7 +238,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Сохраняем информацию об отправителе яйца
     # Формат callback_data: hatch_{sender_id}|{egg_id}
-    # Используем | как разделитель, чтобы избежать проблем с UUID
+    # Реферал устанавливается когда кто-то открывает яйцо (открывающий становится рефералом отправителя)
     callback_data = f"hatch_{sender_id}|{egg_id}"
     
     # Проверяем длину callback_data (максимум 64 байта для Telegram)
@@ -230,13 +273,16 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineQueryResultArticle(
                 id=f"locked_{egg_id}",
                 title="❌ Locked Egg",
-                description=f"You've used all {total_limit} eggs today. Pay {EGG_PACK_PRICE_STARS} Stars for {EGG_PACK_SIZE} more eggs.",
+                description=f"You've used all {total_limit} eggs today. Pay {TON_PRICE_PER_PACK} TON for {EGG_PACK_SIZE} more eggs.",
                 input_message_content=InputTextMessageContent(
                     message_text="❌",
                     parse_mode=ParseMode.HTML
                 ),
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(f"💳 Buy {EGG_PACK_SIZE} eggs for {EGG_PACK_PRICE_STARS} Stars", callback_data=f"buy_eggs_{sender_id}")]
+                    [InlineKeyboardButton(
+                        f"💳 Pay {TON_PRICE_PER_PACK} TON for {EGG_PACK_SIZE} eggs",
+                        url=f"{MINI_APP_URL}?pay=true&user_id={sender_id}"
+                    )]
                 ])
             )
         ]
@@ -296,102 +342,18 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_data()
 
 
-async def pre_checkout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик предварительной проверки платежа"""
-    query = update.pre_checkout_query
-    logger.info(f"Pre-checkout query received: {query.invoice_payload}")
-    
-    # Всегда подтверждаем платеж
-    await query.answer(ok=True)
-    logger.info(f"Pre-checkout approved for payload: {query.invoice_payload}")
-
-async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик успешного платежа"""
-    payment = update.message.successful_payment
-    user_id = update.message.from_user.id
-    
-    logger.info(f"Successful payment received: {payment.invoice_payload}, amount: {payment.total_amount} {payment.currency}")
-    
-    # Парсим payload: egg_pack_{sender_id}
-    if payment.invoice_payload.startswith("egg_pack_"):
-        payload_part = payment.invoice_payload[9:]  # Убираем "egg_pack_"
-        
-        try:
-            sender_id = int(payload_part)
-            
-            # Проверяем, что платеж от правильного пользователя
-            if user_id != sender_id:
-                logger.error(f"Payment user mismatch: {user_id} != {sender_id}")
-                await update.message.reply_text("❌ Error: Payment user mismatch")
-                return
-            
-            # Добавляем оплаченные яйца к лимиту пользователя
-            add_paid_eggs(sender_id, EGG_PACK_SIZE)
-            save_data()
-            
-            # Уведомляем пользователя
-            try:
-                await update.message.reply_text(
-                    f"✅ Payment successful! You've received {EGG_PACK_SIZE} eggs.\n\n"
-                    f"You can now send {EGG_PACK_SIZE} more eggs today!"
-                )
-                logger.info(f"Added {EGG_PACK_SIZE} paid eggs to user {user_id}")
-            except Exception as e:
-                logger.error(f"Error sending confirmation message: {e}")
-        except ValueError as e:
-            logger.error(f"Error parsing payment payload: {e}")
-            await update.message.reply_text("❌ Error processing payment. Please contact support.")
-    else:
-        logger.warning(f"Unknown payment payload: {payment.invoice_payload}")
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик нажатий на кнопки"""
     query = update.callback_query
     
     logger.info(f"Button callback received: {query.data}")
     
-    # Обработка покупки пакета яиц
-    if query.data.startswith("buy_eggs_"):
-        user_id = query.from_user.id
-        data_part = query.data[9:]  # Убираем "buy_eggs_"
-        
-        try:
-            sender_id = int(data_part)
-            
-            # Проверяем, что пользователь покупает для себя
-            if user_id != sender_id:
-                await query.answer("❌ Error: Invalid payment request", show_alert=True)
-                return
-            
-            # Создаем invoice для покупки пакета яиц
-            try:
-                await context.bot.send_invoice(
-                    chat_id=user_id,
-                    title=f"🥚 {EGG_PACK_SIZE} Eggs Pack",
-                    description=f"Buy {EGG_PACK_SIZE} eggs for {EGG_PACK_PRICE_STARS} Telegram Stars",
-                    payload=f"egg_pack_{sender_id}",
-                    provider_token="",  # Для Telegram Stars provider_token должен быть пустой строкой
-                    currency="XTR",  # XTR - это валюта Telegram Stars
-                    prices=[LabeledPrice(label=f"{EGG_PACK_SIZE} Eggs", amount=EGG_PACK_PRICE_STARS)],
-                    start_parameter=f"egg_pack_{sender_id}"
-                )
-                await query.answer("💳 Opening payment...")
-                logger.info(f"Sent invoice to user {user_id} for {EGG_PACK_SIZE} eggs pack")
-            except Exception as e:
-                logger.error(f"Error sending invoice: {e}")
-                await query.answer(f"❌ Error: {str(e)}", show_alert=True)
-        except ValueError as e:
-            logger.error(f"Error parsing buy eggs callback: {e}")
-            await query.answer("❌ Error: Invalid payment request", show_alert=True)
-        return
-    
     # Получаем ID пользователя, который нажал на кнопку
     clicker_id = query.from_user.id
     
     # Извлекаем данные из callback_data
-    # Поддерживаем два формата для обратной совместимости:
-    # Новый: hatch_{sender_id}|{egg_id}
-    # Старый: hatch_{egg_id}_{sender_id} (может быть с дефисами в UUID)
+    # Формат: hatch_{sender_id}|{egg_id}
+    # Поддерживаем старые форматы для обратной совместимости
     
     sender_id = None
     egg_id = None
@@ -407,7 +369,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Пробуем новый формат: sender_id|egg_id
     if "|" in data_part:
         parts = data_part.split("|")
-        if len(parts) == 2:
+        if len(parts) >= 2:
             try:
                 sender_id = int(parts[0])
                 egg_id = parts[1]
@@ -463,6 +425,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Используем egg_key (комбинация sender_id и egg_id) для уникальности
     hatched_eggs.add(egg_key)
     
+    # РЕФЕРАЛЬНАЯ СИСТЕМА: Если clicker_id еще не имеет реферала, устанавливаем sender_id как его реферала
+    # Когда кто-то открывает яйцо, он становится рефералом того, кто отправил яйцо
+    if clicker_id not in referrers and sender_id != clicker_id:
+        referrers[clicker_id] = sender_id
+        logger.info(f"User {clicker_id} became referral of {sender_id}")
+    
     # Обновляем статистику
     # Увеличиваем счетчик для того, кто вылупил
     eggs_hatched_by_user[clicker_id] = eggs_hatched_by_user.get(clicker_id, 0) + 1
@@ -471,9 +439,37 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Начисляем поинты Egg
     # +1 очко тому, кто вылупил чужое яйцо
-    egg_points[clicker_id] = egg_points.get(clicker_id, 0) + 1
+    clicker_points = 1
+    egg_points[clicker_id] = egg_points.get(clicker_id, 0) + clicker_points
+    
     # +2 очка отправителю, чье яйцо вылупили
-    egg_points[sender_id] = egg_points.get(sender_id, 0) + 2
+    sender_points = 2
+    egg_points[sender_id] = egg_points.get(sender_id, 0) + sender_points
+    
+    # РЕФЕРАЛЬНАЯ СИСТЕМА: Рефовод получает 25% от поинтов реферала
+    # После того как clicker_id стал рефералом sender_id, проверяем рефералов
+    # Реферал sender_id получает 25% от поинтов clicker_id (который только что стал его рефералом)
+    # Но только если clicker_id только что стал рефералом (т.е. это первое открытие яйца от sender_id)
+    
+    # Проверяем, есть ли у clicker_id реферал (может быть установлен выше или уже был)
+    clicker_referrer = referrers.get(clicker_id)
+    if clicker_referrer:
+        # Реферал clicker_id получает 25% от поинтов clicker_id
+        referral_bonus = int(clicker_points * REFERRAL_PERCENTAGE)
+        if referral_bonus > 0:
+            referral_earnings[clicker_referrer] = referral_earnings.get(clicker_referrer, 0) + referral_bonus
+            egg_points[clicker_referrer] = egg_points.get(clicker_referrer, 0) + referral_bonus
+            logger.info(f"Referrer {clicker_referrer} earned {referral_bonus} points from referral {clicker_id}")
+    
+    # Проверяем, есть ли у sender_id реферал
+    sender_referrer = referrers.get(sender_id)
+    if sender_referrer:
+        # Реферал sender_id получает 25% от поинтов sender_id
+        referral_bonus = int(sender_points * REFERRAL_PERCENTAGE)
+        if referral_bonus > 0:
+            referral_earnings[sender_referrer] = referral_earnings.get(sender_referrer, 0) + referral_bonus
+            egg_points[sender_referrer] = egg_points.get(sender_referrer, 0) + referral_bonus
+            logger.info(f"Referrer {sender_referrer} earned {referral_bonus} points from referral {sender_id}")
     
     # Проверяем задание "Hatch 100 egg"
     hatched_count = eggs_hatched_by_user.get(clicker_id, 0)
@@ -600,6 +596,8 @@ async def stats_api(request):
     sent_count = eggs_sent_by_user.get(user_id, 0)
     points = egg_points.get(user_id, 0)
     tasks = completed_tasks.get(user_id, {})
+    referral_earned = referral_earnings.get(user_id, 0)
+    referrer_id = referrers.get(user_id)
     
     return web.json_response(
         {
@@ -607,7 +605,9 @@ async def stats_api(request):
             'my_eggs_hatched': my_eggs_hatched,
             'eggs_sent': sent_count,
             'egg_points': points,
-            'tasks': tasks
+            'tasks': tasks,
+            'referral_earned': referral_earned,
+            'has_referrer': referrer_id is not None
         },
         headers={'Access-Control-Allow-Origin': '*'}
     )
@@ -682,6 +682,131 @@ async def check_subscription_api(request):
         )
 
 
+async def verify_ton_payment_api(request):
+    """API endpoint для проверки и подтверждения TON платежа"""
+    # Добавляем CORS headers
+    if request.method == 'OPTIONS':
+        return web.Response(
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        )
+    
+    try:
+        data = await request.json()
+    except Exception as e:
+        return web.json_response(
+            {'error': 'invalid json'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    user_id = data.get('user_id')
+    tx_hash = data.get('tx_hash')
+    amount = data.get('amount')
+    
+    if not user_id or not tx_hash or not amount:
+        return web.json_response(
+            {'error': 'user_id, tx_hash, and amount required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+        amount = float(amount)
+    except (ValueError, TypeError):
+        return web.json_response(
+            {'error': 'invalid user_id or amount'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем, что сумма соответствует требуемой
+    if amount < TON_PRICE_PER_PACK:
+        return web.json_response(
+            {'error': 'insufficient amount', 'required': TON_PRICE_PER_PACK}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем, не был ли уже обработан этот платеж
+    user_payments = ton_payments.get(user_id, [])
+    if any(payment.get('tx_hash') == tx_hash for payment in user_payments):
+        return web.json_response(
+            {'error': 'payment already processed'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # TODO: Здесь должна быть проверка транзакции через TON API
+    # Пока что просто добавляем платеж в список (в продакшене нужно проверять через TON API)
+    today = date.today().isoformat()
+    payment_record = {
+        'date': today,
+        'amount': amount,
+        'tx_hash': tx_hash
+    }
+    
+    if user_id not in ton_payments:
+        ton_payments[user_id] = []
+    ton_payments[user_id].append(payment_record)
+    
+    # Добавляем оплаченные яйца к лимиту пользователя
+    add_paid_eggs(user_id, EGG_PACK_SIZE)
+    save_data()
+    
+    logger.info(f"TON payment verified: user_id={user_id}, amount={amount}, tx_hash={tx_hash}")
+    
+    return web.json_response(
+        {
+            'success': True,
+            'message': f'Payment verified! You can now send {EGG_PACK_SIZE} more eggs.',
+            'eggs_added': EGG_PACK_SIZE
+        },
+        headers={'Access-Control-Allow-Origin': '*'}
+    )
+
+
+async def get_payment_info_api(request):
+    """API endpoint для получения информации о платеже"""
+    user_id = request.query.get('user_id')
+    if not user_id:
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем ежедневный лимит
+    can_send, daily_count, total_limit = check_daily_limit(user_id)
+    needs_payment = not can_send
+    
+    return web.json_response(
+        {
+            'needs_payment': needs_payment,
+            'daily_count': daily_count,
+            'total_limit': total_limit,
+            'free_eggs': FREE_EGGS_PER_DAY,
+            'ton_price': TON_PRICE_PER_PACK,
+            'ton_wallet': TON_WALLET,
+            'eggs_per_pack': EGG_PACK_SIZE
+        },
+        headers={'Access-Control-Allow-Origin': '*'}
+    )
+
+
 def main():
     """Запуск бота"""
     import threading
@@ -694,11 +819,10 @@ def main():
     
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("reset_all", reset_all))
     application.add_handler(InlineQueryHandler(inline_query))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout_handler))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
     
     # Запускаем веб-сервер для API в отдельном потоке
     def run_api_server():
@@ -710,6 +834,9 @@ def main():
             app = web.Application()
             app.router.add_get('/api/stats', stats_api)
             app.router.add_post('/api/stats/check_subscription', check_subscription_api)
+            app.router.add_post('/api/ton/verify_payment', verify_ton_payment_api)
+            app.router.add_get('/api/ton/payment_info', get_payment_info_api)
+            app.router.add_options('/api/ton/verify_payment', verify_ton_payment_api)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', port)
