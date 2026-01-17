@@ -274,20 +274,19 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not can_send_free:
         # Лимит превышен, отправляем крестик (❌) вместо яйца
         # Крестик нельзя вылупить, поэтому не добавляем кнопку Hatch
-        # Кнопка сразу открывает Web App с TON Connect для оплаты
         locked_results = [
             InlineQueryResultArticle(
                 id=f"locked_{egg_id}",
                 title="❌ Locked Egg",
-                description=f"You've used all {total_limit} eggs today. Pay {TON_PRICE_PER_PACK} TON for {EGG_PACK_SIZE} more eggs.",
+                description=f"You've used all {total_limit} eggs today. Buy more eggs in Mini App!",
                 input_message_content=InputTextMessageContent(
                     message_text="❌",
                     parse_mode=ParseMode.HTML
                 ),
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(
-                        f"💎 Connect & Pay {TON_PRICE_PER_PACK} TON",
-                        web_app=WebAppInfo(url=f"{MINI_APP_URL}/ton-pay.html?user_id={sender_id}&amount={TON_PRICE_PER_PACK}")
+                        "📊 Open Mini App",
+                        url="https://t.me/ToHatchBot/app"
                     )]
                 ])
             )
