@@ -134,7 +134,9 @@ def check_daily_limit(user_id):
     
     # Если это новый день или первый раз, сбрасываем счетчик (но сохраняем оплаченные яйца для нового дня)
     if user_data.get('date') != today:
-        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
+        # Сохраняем paid_eggs при инициализации нового дня
+        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
         user_data = daily_eggs_sent[user_id]
     
     daily_count = user_data.get('count', 0)
@@ -153,7 +155,9 @@ def increment_daily_count(user_id):
     
     user_data = daily_eggs_sent.get(user_id, {})
     if user_data.get('date') != today:
-        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
+        # Сохраняем paid_eggs при инициализации нового дня
+        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
     else:
         daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
 
@@ -590,7 +594,9 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 today = date.today().isoformat()
                 user_data = daily_eggs_sent.get(user_id, {})
                 if user_data.get('date') != today:
-                    daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
+                    # Сохраняем paid_eggs при инициализации нового дня
+        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
                     user_data = daily_eggs_sent[user_id]
                 user_data['paid_eggs'] = user_data.get('paid_eggs', 0) + 20
                 
@@ -646,12 +652,13 @@ async def stats_api(request):
     referrals_count = sum(1 for ref_user_id, ref_referrer_id in referrers.items() if ref_referrer_id == user_id)
     
     # Calculate available eggs (10 free per day + paid eggs - sent today)
+    # Paid eggs сохраняются между днями, сбрасывается только daily_sent
     today = date.today().isoformat()
     user_data = daily_eggs_sent.get(user_id, {})
     if user_data.get('date') != today:
-        # New day, reset
+        # New day, reset only daily_sent, keep paid_eggs
         daily_sent = 0
-        paid_eggs = 0
+        paid_eggs = user_data.get('paid_eggs', 0)  # Сохраняем купленные яйца
     else:
         daily_sent = user_data.get('count', 0)
         paid_eggs = user_data.get('paid_eggs', 0)
@@ -731,7 +738,9 @@ async def check_subscription_api(request):
                     today = date.today().isoformat()
                     user_data = daily_eggs_sent.get(user_id, {})
                     if user_data.get('date') != today:
-                        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': 0}
+                        # Сохраняем paid_eggs при инициализации нового дня
+        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+        daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
                         user_data = daily_eggs_sent[user_id]
                     user_data['paid_eggs'] = user_data.get('paid_eggs', 0) + 20
                     
