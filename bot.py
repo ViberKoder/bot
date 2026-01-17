@@ -293,34 +293,11 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🥚 Hatch", callback_data=callback_data)]
     ])
     
-    # Проверяем ежедневный лимит
+    # Безлимитный режим - всегда разрешаем отправку яиц
+    # Проверяем ежедневный лимит только для статистики (не блокируем)
     can_send_free, daily_count, total_limit = check_daily_limit(sender_id)
     
-    if not can_send_free:
-        # Лимит превышен, отправляем крестик (❌) вместо яйца
-        # Крестик нельзя вылупить, поэтому не добавляем кнопку Hatch
-        locked_results = [
-            InlineQueryResultArticle(
-                id=f"locked_{egg_id}",
-                title="❌ Locked Egg",
-                description=f"You've used all {total_limit} eggs today. Buy more eggs in Mini App!",
-                input_message_content=InputTextMessageContent(
-                    message_text="❌",
-                    parse_mode=ParseMode.HTML
-                ),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "📊 Open Mini App",
-                        url="https://t.me/ToHatchBot/app"
-                    )]
-                ])
-            )
-        ]
-        await update.inline_query.answer(locked_results, cache_time=1)
-        logger.info(f"User {sender_id} exceeded daily limit ({daily_count}/{total_limit}), sending locked egg (❌)")
-        return
-    
-    # Лимит не превышен, создаем результат с эмодзи яйца
+    # Создаем результат с эмодзи яйца (безлимит)
     results = [
         InlineQueryResultArticle(
             id=egg_id,
