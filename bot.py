@@ -487,29 +487,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     egg_points[sender_id] = egg_points.get(sender_id, 0) + sender_points
     
     # РЕФЕРАЛЬНАЯ СИСТЕМА: Рефовод получает 25% от поинтов реферала
-    # После того как clicker_id стал рефералом sender_id, проверяем рефералов
-    # Реферал sender_id получает 25% от поинтов clicker_id (который только что стал его рефералом)
-    # Но только если clicker_id только что стал рефералом (т.е. это первое открытие яйца от sender_id)
+    # Когда реферал зарабатывает поинты, его рефовод получает 25% от этих поинтов
     
     # Проверяем, есть ли у clicker_id реферал (может быть установлен выше или уже был)
     clicker_referrer = referrers.get(clicker_id)
-    if clicker_referrer:
+    if clicker_referrer and clicker_referrer != clicker_id:
         # Реферал clicker_id получает 25% от поинтов clicker_id
         referral_bonus = int(clicker_points * REFERRAL_PERCENTAGE)
         if referral_bonus > 0:
             referral_earnings[clicker_referrer] = referral_earnings.get(clicker_referrer, 0) + referral_bonus
             egg_points[clicker_referrer] = egg_points.get(clicker_referrer, 0) + referral_bonus
-            logger.info(f"Referrer {clicker_referrer} earned {referral_bonus} points from referral {clicker_id}")
+            logger.info(f"Referrer {clicker_referrer} earned {referral_bonus} points (25% of {clicker_points}) from referral {clicker_id}")
     
     # Проверяем, есть ли у sender_id реферал
     sender_referrer = referrers.get(sender_id)
-    if sender_referrer:
+    if sender_referrer and sender_referrer != sender_id:
         # Реферал sender_id получает 25% от поинтов sender_id
         referral_bonus = int(sender_points * REFERRAL_PERCENTAGE)
         if referral_bonus > 0:
             referral_earnings[sender_referrer] = referral_earnings.get(sender_referrer, 0) + referral_bonus
             egg_points[sender_referrer] = egg_points.get(sender_referrer, 0) + referral_bonus
-            logger.info(f"Referrer {sender_referrer} earned {referral_bonus} points from referral {sender_id}")
+            logger.info(f"Referrer {sender_referrer} earned {referral_bonus} points (25% of {sender_points}) from referral {sender_id}")
     
     # Проверяем задание "Hatch 100 egg"
     hatched_count = eggs_hatched_by_user.get(clicker_id, 0)
