@@ -16,6 +16,7 @@ import json
 import os
 from datetime import datetime, date
 import aiohttp
+from eggchain_api import setup_eggchain_routes
 
 # Настройка логирования
 logging.basicConfig(
@@ -61,7 +62,8 @@ def load_data():
                     'completed_tasks': data.get('completed_tasks', {}),
                     'referrers': data.get('referrers', {}),  # {user_id: referrer_id} - кто привел пользователя
                     'referral_earnings': data.get('referral_earnings', {}),  # {referrer_id: total_earned} - сколько заработал рефовод
-                    'ton_payments': data.get('ton_payments', {})  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
+                    'ton_payments': data.get('ton_payments', {}),  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
+                    'eggs_detail': data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched}}
                 }
         except Exception as e:
             logger.error(f"Error loading data: {e}")
@@ -81,7 +83,8 @@ def get_default_data():
         'completed_tasks': {},
         'referrers': {},
         'referral_earnings': {},
-        'ton_payments': {}
+        'ton_payments': {},
+        'eggs_detail': {}
     }
 
 # Функция для сохранения данных в файл
@@ -98,7 +101,8 @@ def save_data():
             'completed_tasks': completed_tasks,
             'referrers': referrers,
             'referral_earnings': referral_earnings,
-            'ton_payments': ton_payments
+            'ton_payments': ton_payments,
+            'eggs_detail': eggs_detail
         }
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -118,6 +122,7 @@ completed_tasks = data['completed_tasks']
 referrers = data.get('referrers', {})  # {user_id: referrer_id}
 referral_earnings = data.get('referral_earnings', {})  # {referrer_id: total_earned}
 ton_payments = data.get('ton_payments', {})  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
+eggs_detail = data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched}}
 
 # Функция для проверки и обновления ежедневного лимита
 def check_daily_limit(user_id):
@@ -247,6 +252,16 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Используем короткий формат: первые 16 символов UUID без дефисов
     # Это достаточно для уникальности и помещается в лимит Telegram (64 байта)
     egg_id = str(uuid.uuid4()).replace("-", "")[:16]
+    
+    # Сохраняем детальную информацию о яйце для Eggchain Explorer
+    egg_key = f"{sender_id}_{egg_id}"
+    eggs_detail[egg_key] = {
+        'sender_id': sender_id,
+        'egg_id': egg_id,
+        'hatched_by': None,
+        'timestamp_sent': datetime.now().isoformat(),
+        'timestamp_hatched': None
+    }
     
     # Сохраняем информацию об отправителе яйца
     # Формат callback_data: hatch_{sender_id}|{egg_id}
@@ -436,6 +451,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Помечаем яйцо как вылупленное СРАЗУ, чтобы предотвратить двойное вылупление
     # Используем egg_key (комбинация sender_id и egg_id) для уникальности
     hatched_eggs.add(egg_key)
+    
+    # Обновляем детальную информацию о яйце для Eggchain Explorer
+    if egg_key not in eggs_detail:
+        eggs_detail[egg_key] = {
+            'sender_id': sender_id,
+            'egg_id': egg_id,
+            'hatched_by': clicker_id,
+            'timestamp_sent': datetime.now().isoformat(),
+            'timestamp_hatched': datetime.now().isoformat()
+        }
+    else:
+        eggs_detail[egg_key]['hatched_by'] = clicker_id
+        eggs_detail[egg_key]['timestamp_hatched'] = datetime.now().isoformat()
     
     # РЕФЕРАЛЬНАЯ СИСТЕМА: Если clicker_id еще не имеет реферала, устанавливаем sender_id как его реферала
     # Когда кто-то открывает яйцо, он становится рефералом того, кто отправил яйцо
@@ -905,6 +933,8 @@ def main():
             app.router.add_post('/api/ton/verify_payment', verify_ton_payment_api)
             app.router.add_get('/api/ton/payment_info', get_payment_info_api)
             app.router.add_options('/api/ton/verify_payment', verify_ton_payment_api)
+            # Добавляем роуты для Eggchain Explorer
+            setup_eggchain_routes(app)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', port)
