@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>TON Payment</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: #ffffff;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #000;
+        }
+        .info {
+            background: #f5f5f5;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .info p {
+            margin: 10px 0;
+            color: #666;
+        }
+        .amount {
+            font-size: 32px;
+            font-weight: bold;
+            color: #0088cc;
+            margin: 20px 0;
+        }
+        #ton-connect-btn {
+            margin: 20px 0;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 8px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            display: block;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💎 TON Payment</h1>
+        <div class="info">
+            <p>You need to pay:</p>
+            <div class="amount" id="amount">0.1 TON</div>
+            <p>for <strong id="eggs-count">10</strong> more eggs</p>
+        </div>
+        <div id="ton-connect-btn"></div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+
+        // Get parameters from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const userId = urlParams.get('user_id');
+        const amount = parseFloat(urlParams.get('amount') || '0.1');
+        const eggsCount = 10;
+
+        document.getElementById('amount').textContent = amount + ' TON';
+        document.getElementById('eggs-count').textContent = eggsCount;
+
+        // TON Connect
+        let tonConnectUI = null;
+        let walletAddress = null;
+
+        function initTONConnect() {
+            if (typeof TonConnectUI !== 'undefined') {
+                tonConnectUI = new TonConnectUI({
+                    manifestUrl: window.location.origin + '/tonconnect-manifest.json',
+                    buttonRootId: 'ton-connect-btn'
+                });
+
+                tonConnectUI.onStatusChange(async (wallet) => {
+                    if (wallet) {
+                        walletAddress = wallet.account.address;
+                        console.log('TON Wallet connected:', walletAddress);
+                        await processPayment();
+                    } else {
+                        walletAddress = null;
+                        console.log('TON Wallet disconnected');
+                    }
+                });
+            } else {
+                document.getElementById('status').textContent = 'TON Connect not loaded';
+                document.getElementById('status').className = 'status error';
+            }
+        }
+
+        async function processPayment() {
+            if (!walletAddress || !userId) {
+                showStatus('Error: Wallet not connected or user ID missing', 'error');
+                return;
+            }
+
+            const wallet = 'UQCHdlQ2TLpa6Kpu5Pu8HeJd1xe3EL1Kx2wFekeuOnSpFcP0';
+            const transaction = {
+                validUntil: Math.floor(Date.now() / 1000) + 360,
+                messages: [
+                    {
+                        address: wallet,
+                        amount: (amount * 1000000000).toString(),
+                    }
+                ]
+            };
+
+            try {
+                showStatus('Processing payment...', '');
+                const result = await tonConnectUI.sendTransaction(transaction);
+                console.log('Transaction result:', result);
+
+                // Verify payment
+                const verifyResponse = await fetch('https://web-production-11ef2.up.railway.app/api/ton/verify_payment', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: parseInt(userId),
+                        tx_hash: result.boc,
+                        amount: amount
+                    })
+                });
+
+                const verifyData = await verifyResponse.json();
+
+                if (verifyResponse.ok && verifyData.success) {
+                    showStatus(`✅ Payment successful! You can now send ${verifyData.eggs_added} more eggs.`, 'success');
+                    tg.showAlert(`✅ Payment successful! You can now send ${verifyData.eggs_added} more eggs.`);
+                    setTimeout(() => {
+                        tg.close();
+                    }, 2000);
+                } else {
+                    showStatus(`❌ Payment verification failed: ${verifyData.error || 'Unknown error'}`, 'error');
+                    tg.showAlert(`❌ Payment verification failed: ${verifyData.error || 'Unknown error'}`);
+                }
+            } catch (error) {
+                console.error('Error processing payment:', error);
+                showStatus(`❌ Payment failed: ${error.message}`, 'error');
+                tg.showAlert(`❌ Payment failed: ${error.message}`);
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+        }
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', () => {
+            initTONConnect();
+        });
+    </script>
+</body>
+</html>
