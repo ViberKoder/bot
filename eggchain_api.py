@@ -269,3 +269,5 @@ def setup_eggchain_routes(app):
     app.router.add_options('/api/egg/{egg_id}', get_egg_by_id)
     app.router.add_get('/api/user/{user_id}/eggs', get_user_eggs)
     app.router.add_options('/api/user/{user_id}/eggs', get_user_eggs)
+    app.router.add_get('/api/user/username/{username}', get_user_by_username)
+    app.router.add_options('/api/user/username/{username}', get_user_by_username)
