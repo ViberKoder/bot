@@ -21,3 +21,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Bot data
+bot_data.json

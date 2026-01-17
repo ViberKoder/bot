@@ -24,8 +24,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Токен бота
-BOT_TOKEN = "8439367607:AAGcK4tBrXKkqm5DDG7Sp3YSKEQTX09XqXE"
+# Токен бота - получаем из переменной окружения
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN environment variable is not set!")
+    raise ValueError("BOT_TOKEN environment variable is required!")
 
 # Файл для сохранения данных
 DATA_FILE = "bot_data.json"
@@ -727,10 +730,20 @@ async def verify_ton_payment_api(request):
             headers={'Access-Control-Allow-Origin': '*'}
         )
     
-    # Проверяем, что сумма соответствует требуемой
-    if amount < TON_PRICE_PER_PACK:
+    # Вычисляем количество яиц на основе суммы (10 яиц = 0.1 TON)
+    eggs_to_add = int((amount / TON_PRICE_PER_PACK) * EGG_PACK_SIZE)
+    
+    # Проверяем, что количество яиц в допустимом диапазоне (10-1000)
+    if eggs_to_add < 10:
         return web.json_response(
-            {'error': 'insufficient amount', 'required': TON_PRICE_PER_PACK}, 
+            {'error': 'insufficient amount', 'required': TON_PRICE_PER_PACK, 'message': 'Minimum purchase is 10 eggs (0.1 TON)'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if eggs_to_add > 1000:
+        return web.json_response(
+            {'error': 'too many eggs', 'max': 1000, 'message': 'Maximum purchase is 1000 eggs (10 TON)'}, 
             status=400,
             headers={'Access-Control-Allow-Origin': '*'}
         )
@@ -750,7 +763,8 @@ async def verify_ton_payment_api(request):
     payment_record = {
         'date': today,
         'amount': amount,
-        'tx_hash': tx_hash
+        'tx_hash': tx_hash,
+        'eggs': eggs_to_add
     }
     
     if user_id not in ton_payments:
@@ -758,16 +772,16 @@ async def verify_ton_payment_api(request):
     ton_payments[user_id].append(payment_record)
     
     # Добавляем оплаченные яйца к лимиту пользователя
-    add_paid_eggs(user_id, EGG_PACK_SIZE)
+    add_paid_eggs(user_id, eggs_to_add)
     save_data()
     
-    logger.info(f"TON payment verified: user_id={user_id}, amount={amount}, tx_hash={tx_hash}")
+    logger.info(f"TON payment verified: user_id={user_id}, amount={amount}, eggs={eggs_to_add}, tx_hash={tx_hash}")
     
     return web.json_response(
         {
             'success': True,
-            'message': f'Payment verified! You can now send {EGG_PACK_SIZE} more eggs.',
-            'eggs_added': EGG_PACK_SIZE
+            'message': f'Payment verified! You can now send {eggs_to_add} more eggs.',
+            'eggs_added': eggs_to_add
         },
         headers={'Access-Control-Allow-Origin': '*'}
     )
