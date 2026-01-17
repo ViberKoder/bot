@@ -607,6 +607,21 @@ async def stats_api(request):
     # Count referrals (users who have this user as referrer)
     referrals_count = sum(1 for ref_user_id, ref_referrer_id in referrers.items() if ref_referrer_id == user_id)
     
+    # Calculate available eggs (10 free per day + paid eggs - sent today)
+    today = date.today().isoformat()
+    user_data = daily_eggs_sent.get(user_id, {})
+    if user_data.get('date') != today:
+        # New day, reset
+        daily_sent = 0
+        paid_eggs = 0
+    else:
+        daily_sent = user_data.get('count', 0)
+        paid_eggs = user_data.get('paid_eggs', 0)
+    
+    available_eggs = FREE_EGGS_PER_DAY + paid_eggs - daily_sent
+    if available_eggs < 0:
+        available_eggs = 0
+    
     return web.json_response(
         {
             'hatched_by_me': hatched_count,
@@ -614,6 +629,7 @@ async def stats_api(request):
             'eggs_sent': sent_count,
             'egg_points': points,
             'hatch_points': hatched_count,  # Hatch points = вылупленные яйца
+            'available_eggs': available_eggs,  # Available eggs to send today
             'tasks': tasks,
             'referral_earned': referral_earned,
             'referral_earnings': referral_earned,  # Alias for compatibility
