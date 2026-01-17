@@ -901,6 +901,7 @@ def main():
             app = web.Application()
             app.router.add_get('/api/stats', stats_api)
             app.router.add_post('/api/stats/check_subscription', check_subscription_api)
+            app.router.add_options('/api/stats/check_subscription', check_subscription_api)
             app.router.add_post('/api/ton/verify_payment', verify_ton_payment_api)
             app.router.add_get('/api/ton/payment_info', get_payment_info_api)
             app.router.add_options('/api/ton/verify_payment', verify_ton_payment_api)
