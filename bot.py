@@ -154,12 +154,17 @@ def increment_daily_count(user_id):
     today = date.today().isoformat()
     
     user_data = daily_eggs_sent.get(user_id, {})
-    if user_data.get('date') != today:
+    # Если это новый день или первый раз, инициализируем счетчик
+    if not user_data or user_data.get('date') != today:
         # Сохраняем paid_eggs при инициализации нового дня
-        old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+        old_paid_eggs = user_data.get('paid_eggs', 0) if user_data else 0
         daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
-    else:
-        daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
+        user_data = daily_eggs_sent[user_id]
+    
+    # Увеличиваем счетчик
+    daily_eggs_sent[user_id]['count'] = user_data.get('count', 0) + 1
+    # Сохраняем данные сразу
+    save_data()
 
 def add_paid_eggs(user_id, amount):
     """Добавляет оплаченные яйца к лимиту пользователя"""
@@ -337,15 +342,10 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     
     await update.inline_query.answer(results, cache_time=1)
-    logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}")
+    logger.info(f"Results sent: {len(results)} result(s), callback_data length: {len(callback_data.encode('utf-8'))}, can_send: {can_send_free}, daily_count: {daily_count}, total_limit: {total_limit}")
     
-    # Увеличиваем счетчики только если запрос содержит "egg" или пустой
-    if "egg" in query or query == "":
-        # Увеличиваем общий счетчик
-        eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
-        
-        # Увеличиваем ежедневный счетчик
-        increment_daily_count(sender_id)
+    # НЕ увеличиваем счетчики здесь - они увеличиваются только когда яйцо реально отправлено (в button_callback)
+    # Счетчики увеличиваются только когда пользователь нажимает кнопку "Hatch" и яйцо вылупляется
         
         # Проверяем задание "Send 100 egg"
         if eggs_sent_by_user[sender_id] >= 100 and not completed_tasks.get(sender_id, {}).get('send_100_eggs', False):
