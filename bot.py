@@ -193,31 +193,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /reset_all - обнуляет все поинты и счетчики яиц"""
+    """Обработчик команды /reset_all - полностью обнуляет все счетчики и бесплатные яйца"""
     user_id = update.message.from_user.id
     
-    # Обнуляем все поинты
-    egg_points.clear()
-    
-    # Обнуляем счетчики отправленных яиц
-    eggs_sent_by_user.clear()
-    daily_eggs_sent.clear()
-    
-    # Обнуляем реферальные заработки
-    referral_earnings.clear()
+    # Полностью обнуляем все счетчики
+    egg_points.clear()  # Все поинты
+    eggs_sent_by_user.clear()  # Счетчики отправленных яиц
+    daily_eggs_sent.clear()  # Ежедневные счетчики (сбрасывает бесплатные яйца)
+    eggs_hatched_by_user.clear()  # Сколько яиц вылупил каждый пользователь (hatched_by_me)
+    user_eggs_hatched_by_others.clear()  # Сколько яиц пользователя вылупили другие (my_eggs_hatched)
+    hatched_eggs.clear()  # Список всех вылупленных яиц
+    referral_earnings.clear()  # Реферальные заработки
+    completed_tasks.clear()  # Выполненные задания
     
     # Сохраняем изменения
     save_data()
     
-    logger.info(f"User {user_id} reset all points and egg counters")
+    logger.info(f"User {user_id} reset ALL counters and free eggs")
     
     await update.message.reply_text(
-        "✅ Все поинты и счетчики яиц обнулены!\n\n"
-        "Обнулено:\n"
-        "• Все Egg поинты\n"
-        "• Счетчики отправленных яиц\n"
-        "• Реферальные заработки\n\n"
-        "Статистика вылупления и реферальная система сохранены."
+        "✅ Все счетчики и бесплатные яйца полностью сброшены!\n\n"
+        "Сброшено:\n"
+        "• Все счетчики вылупленных яиц (hatched_by_me)\n"
+        "• Все счетчики своих яиц, вылупленных другими (my_eggs_hatched)\n"
+        "• Все счетчики отправленных яиц\n"
+        "• Все ежедневные счетчики (бесплатные яйца сброшены)\n"
+        "• Все поинты\n"
+        "• Все вылупленные яйца\n"
+        "• Все выполненные задания\n"
+        "• Все реферальные заработки\n\n"
+        "Сохранено:\n"
+        "• Реферальная система (кто кого привел)\n"
+        "• История TON платежей"
     )
 
 
