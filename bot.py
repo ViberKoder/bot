@@ -657,6 +657,18 @@ bot_application = None
 
 async def check_subscription_api(request):
     """API endpoint для проверки подписки"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=200,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                'Access-Control-Max-Age': '3600'
+            }
+        )
+    
     # Добавляем CORS headers
     user_id = request.query.get('user_id')
     if not user_id:
