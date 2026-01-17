@@ -32,7 +32,8 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required!")
 
 # Файл для сохранения данных
-DATA_FILE = "bot_data.json"
+# Используем абсолютный путь для Railway - сохраняем в /tmp или в рабочей директории
+DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
 
 # ID канала Hatch Egg
 HATCH_EGG_CHANNEL = "@hatch_egg"
@@ -48,10 +49,20 @@ REFERRAL_PERCENTAGE = 0.25  # 25% от поинтов реферала
 # Функция для загрузки данных из файла
 def load_data():
     """Загружает данные из файла"""
+    logger.info(f"Loading data from: {DATA_FILE}")
+    logger.info(f"Current working directory: {os.getcwd()}")
+    logger.info(f"File exists: {os.path.exists(DATA_FILE)}")
+    
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+                
+                # Логируем загруженные данные для отладки
+                egg_points_count = len(data.get('egg_points', {}))
+                referrers_count = len(data.get('referrers', {}))
+                logger.info(f"Loaded data: {egg_points_count} users with points, {referrers_count} referrers")
+                
                 return {
                     'hatched_eggs': set(data.get('hatched_eggs', [])),
                     'eggs_hatched_by_user': data.get('eggs_hatched_by_user', {}),
@@ -66,8 +77,10 @@ def load_data():
                     'eggs_detail': data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched}}
                 }
         except Exception as e:
-            logger.error(f"Error loading data: {e}")
+            logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
             return get_default_data()
+    else:
+        logger.warning(f"Data file {DATA_FILE} does not exist, using default data")
     return get_default_data()
 
 # Функция для получения данных по умолчанию
@@ -104,11 +117,39 @@ def save_data():
             'ton_payments': ton_payments,
             'eggs_detail': eggs_detail
         }
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
+        
+        # Логируем что сохраняем
+        egg_points_count = len(egg_points)
+        referrers_count = len(referrers)
+        logger.info(f"Saving data to {DATA_FILE}: {egg_points_count} users with points, {referrers_count} referrers")
+        
+        # Сохраняем во временный файл сначала, потом переименовываем (атомарная операция)
+        temp_file = DATA_FILE + '.tmp'
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.info("Data saved successfully")
+        
+        # Атомарно заменяем старый файл новым
+        if os.path.exists(DATA_FILE):
+            os.replace(temp_file, DATA_FILE)
+        else:
+            os.rename(temp_file, DATA_FILE)
+        
+        # Проверяем, что файл действительно сохранился
+        if os.path.exists(DATA_FILE):
+            file_size = os.path.getsize(DATA_FILE)
+            logger.info(f"Data saved successfully to {DATA_FILE} (size: {file_size} bytes)")
+        else:
+            logger.error(f"CRITICAL: Data file {DATA_FILE} was not created after save!")
+            
     except Exception as e:
-        logger.error(f"Error saving data: {e}")
+        logger.error(f"Error saving data to {DATA_FILE}: {e}", exc_info=True)
+        # Пытаемся удалить временный файл если он остался
+        temp_file = DATA_FILE + '.tmp'
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
 
 # Загружаем данные при старте
 data = load_data()
