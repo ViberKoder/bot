@@ -8,6 +8,32 @@ import json
 import os
 from datetime import datetime
 
+# Глобальная переменная для доступа к боту (будет установлена из bot.py)
+bot_instance = None
+
+def set_bot_instance(bot):
+    """Устанавливает экземпляр бота для получения информации о пользователях"""
+    global bot_instance
+    bot_instance = bot
+
+async def get_user_info(user_id):
+    """Получает информацию о пользователе из Telegram"""
+    if not bot_instance:
+        return None, None
+    
+    try:
+        user = await bot_instance.get_chat(user_id)
+        username = user.username if hasattr(user, 'username') and user.username else None
+        # Получаем фото профиля
+        photos = await bot_instance.get_user_profile_photos(user_id, limit=1)
+        avatar_file_id = None
+        if photos and photos.total_count > 0:
+            avatar_file_id = photos.photos[0][0].file_id
+        
+        return username, avatar_file_id
+    except Exception as e:
+        return None, None
+
 # Путь к файлу данных (должен совпадать с bot.py)
 DATA_FILE = os.getenv('DATA_FILE', 'bot_data.json')
 
@@ -120,13 +146,19 @@ async def get_egg_by_id(request):
             # Можно попробовать найти из других данных, но для простоты оставляем None
             pass
         
+        # Получаем информацию о пользователях
+        sender_username, sender_avatar_file, sender_avatar_url = await get_user_info(sender_id) if sender_id else (None, None, None)
+        hatched_by_username, hatched_by_avatar_file, hatched_by_avatar_url = await get_user_info(hatched_by) if hatched_by else (None, None, None)
+        
         result = {
             'egg_id': egg_id,
             'sender_id': sender_id,
-            'sender_username': None,  # Username нужно получать из Telegram API
+            'sender_username': sender_username,
+            'sender_avatar': sender_avatar_url,
             'recipient_id': None,
             'hatched_by': hatched_by,
-            'hatched_by_username': None,
+            'hatched_by_username': hatched_by_username,
+            'hatched_by_avatar': hatched_by_avatar_url,
             'timestamp_sent': timestamp_sent,
             'timestamp_hatched': timestamp_hatched,
             'status': 'hatched' if is_hatched else 'pending'
@@ -174,13 +206,18 @@ async def get_user_eggs(request):
             if egg_info.get('sender_id') == user_id:
                 egg_id = egg_info.get('egg_id', egg_key.split('_', 1)[1] if '_' in egg_key else egg_key)
                 is_hatched = egg_key in hatched_eggs
+                hatched_by = egg_info.get('hatched_by')
+                
+                # Получаем информацию о том, кто вылупил
+                hatched_by_username, hatched_by_avatar_file, hatched_by_avatar_url = await get_user_info(hatched_by) if hatched_by else (None, None, None)
                 
                 user_eggs.append({
                     'egg_id': egg_id,
                     'sender_id': user_id,
                     'recipient_id': None,
-                    'hatched_by': egg_info.get('hatched_by'),
-                    'hatched_by_username': None,
+                    'hatched_by': hatched_by,
+                    'hatched_by_username': hatched_by_username,
+                    'hatched_by_avatar': hatched_by_avatar_url,
                     'timestamp_sent': egg_info.get('timestamp_sent'),
                     'timestamp_hatched': egg_info.get('timestamp_hatched'),
                     'status': 'hatched' if is_hatched else 'pending'

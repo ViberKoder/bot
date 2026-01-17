@@ -16,7 +16,7 @@ import json
 import os
 from datetime import datetime, date
 import aiohttp
-from eggchain_api import setup_eggchain_routes
+from eggchain_api import setup_eggchain_routes, set_bot_instance
 
 # Настройка логирования
 logging.basicConfig(
@@ -911,6 +911,9 @@ def main():
     # Создаем приложение
     application = Application.builder().token(BOT_TOKEN).build()
     bot_application = application
+    
+    # Передаем бота в eggchain_api для получения информации о пользователях
+    set_bot_instance(application.bot)
     
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
