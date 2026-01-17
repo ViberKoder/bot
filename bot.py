@@ -915,7 +915,8 @@ def main():
     
     # Регистрируем обработчики
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("reset_all", reset_all))
+    # Команда reset_all отключена для защиты данных пользователей
+    # application.add_handler(CommandHandler("reset_all", reset_all))
     application.add_handler(InlineQueryHandler(inline_query))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
