@@ -359,18 +359,13 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Inline query received: '{query}' (original: '{update.inline_query.query}')")
     
-    # Парсим запрос: "egg" или "egg N" где N от 2 до 100
+    # Парсим запрос: пустой запрос, "egg" или "egg N" где N от 2 до 100
     is_multi = False
     max_hatches = 1
     
-    # Проверяем, содержит ли запрос "egg"
-    if "egg" not in query:
-        logger.info(f"Query '{query}' doesn't contain 'egg', returning empty results")
-        await update.inline_query.answer([], cache_time=1)
-        return
-    
-    # Пытаемся извлечь число после "egg"
-    # Форматы: "egg", "egg 50", "egg50", "egg 100", и т.д.
+    # Если запрос пустой или содержит "egg", показываем яйцо
+    # Пытаемся извлечь число после "egg" для multi egg
+    # Форматы: "", "egg", "egg 50", "egg50", "egg 100", и т.д.
     import re
     egg_match = re.search(r'egg\s*(\d+)', query)
     if egg_match:
@@ -480,7 +475,8 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Увеличиваем счетчики когда яйцо отправлено через inline query
     # В Telegram inline query, яйцо считается отправленным когда пользователь выбирает его из результатов
-    if "egg" in query or query == "":
+    # Показываем яйцо для любого запроса (пустой или с "egg")
+    if True:  # Всегда увеличиваем счетчик при отправке яйца
         # Увеличиваем общий счетчик отправленных яиц
         eggs_sent_by_user[sender_id] = eggs_sent_by_user.get(sender_id, 0) + 1
         
