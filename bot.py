@@ -140,6 +140,19 @@ def load_data():
             logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
             return get_default_data()
     else:
+        # Если файл не найден в Volume, проверяем резервную копию в /app
+        backup_file = os.path.join(os.getcwd(), "bot_data.json")
+        if os.path.exists(backup_file) and DATA_FILE.startswith('/data/'):
+            logger.warning(f"Data file {DATA_FILE} not found, but found backup at {backup_file}. Copying to Volume...")
+            try:
+                import shutil
+                shutil.copy2(backup_file, DATA_FILE)
+                logger.info(f"Copied backup data from {backup_file} to {DATA_FILE}")
+                # Рекурсивно вызываем себя для загрузки скопированных данных
+                return load_data()
+            except Exception as e:
+                logger.error(f"Failed to copy backup data: {e}", exc_info=True)
+        
         logger.warning(f"Data file {DATA_FILE} does not exist, using default data")
     return get_default_data()
 
