@@ -134,16 +134,34 @@ def load_data():
                     'admin_tasks': data.get('admin_tasks', [])  # [{id, name, avatar_url, channel, reward, created_at}]
                 }
         except Exception as e:
+            logger.error(f"=== ERROR LOADING DATA ===")
             logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
-            return get_default_data()
+            logger.error(f"File exists but corrupted or unreadable!")
+            logger.error(f"CRITICAL: Will NOT use default data to prevent data loss!")
+            logger.error(f"Trying to backup corrupted file and raise error...")
+            
+            # Пытаемся создать backup поврежденного файла
+            try:
+                backup_file = DATA_FILE + '.corrupted.' + str(int(time.time()))
+                import shutil
+                if os.path.exists(DATA_FILE):
+                    shutil.copy2(DATA_FILE, backup_file)
+                    logger.error(f"Corrupted file backed up to: {backup_file}")
+            except Exception as backup_error:
+                logger.error(f"Failed to backup corrupted file: {backup_error}")
+            
+            # НЕ возвращаем дефолтные данные - это приведет к потере данных!
+            # Вместо этого поднимаем исключение
+            raise RuntimeError(f"Failed to load data from {DATA_FILE}. File may be corrupted. Backup created if possible.")
     else:
         logger.error(f"=== DATA FILE NOT FOUND ===")
         logger.error(f"Data file {DATA_FILE} does not exist!")
         logger.error(f"Volume /data exists: {os.path.exists('/data')}")
         logger.error(f"Volume /data writable: {os.access('/data', os.W_OK) if os.path.exists('/data') else False}")
-        logger.error("Using default data - ALL DATA WILL BE LOST!")
+        logger.error("File does not exist - this is first run or data was lost")
         logger.error(f"=== END LOADING (DEFAULT DATA) ===")
-    return get_default_data()
+        # Только если файла действительно нет - используем дефолт
+        return get_default_data()
 
 # Функция для получения данных по умолчанию
 def get_default_data():
