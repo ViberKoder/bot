@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from telegram import (
     InlineQueryResultArticle, 
     InputTextMessageContent, 
@@ -14,6 +15,7 @@ import uuid
 from aiohttp import web
 import json
 import os
+import re
 from datetime import datetime, date
 import aiohttp
 from eggchain_api import setup_eggchain_routes, set_bot_instance
@@ -32,11 +34,34 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required!")
 
 # Файл для сохранения данных
-# Используем абсолютный путь для Railway - сохраняем в /tmp или в рабочей директории
-DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
+# Используем переменную окружения DATA_FILE_PATH если установлена, иначе рабочую директорию
+# На Railway рекомендуется использовать volume для постоянного хранения
+DATA_FILE_PATH = os.environ.get('DATA_FILE_PATH')
+if DATA_FILE_PATH:
+    DATA_FILE = DATA_FILE_PATH
+else:
+    # Пробуем использовать /data для постоянного хранения (если доступно)
+    data_dir = '/data'
+    if os.path.exists(data_dir) and os.access(data_dir, os.W_OK):
+        DATA_FILE = os.path.join(data_dir, "bot_data.json")
+    else:
+        # Fallback на рабочую директорию
+        DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
 
 # ID канала Hatch Egg
 HATCH_EGG_CHANNEL = "@hatch_egg"
+
+# Username бота для реферальных ссылок (получаем из переменной окружения или используем дефолт)
+BOT_USERNAME = os.environ.get('BOT_USERNAME', 'tohatchbot')
+
+# Owner ID для админ-панели (получаем из переменной окружения)
+OWNER_ID = os.environ.get('OWNER_ID')
+if OWNER_ID:
+    try:
+        OWNER_ID = int(OWNER_ID)
+    except ValueError:
+        OWNER_ID = None
+        logger.warning("OWNER_ID is not a valid integer, admin panel will be disabled")
 
 # Лимиты
 FREE_EGGS_PER_DAY = 10
@@ -80,7 +105,9 @@ def load_data():
                     'referrers': data.get('referrers', {}),  # {user_id: referrer_id} - кто привел пользователя
                     'referral_earnings': data.get('referral_earnings', {}),  # {referrer_id: total_earned} - сколько заработал рефовод
                     'ton_payments': data.get('ton_payments', {}),  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
-                    'eggs_detail': data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched}}
+                    'eggs_detail': data.get('eggs_detail', {}),  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched, is_multi, max_hatches, hatched_count, hatched_by_list}}
+                    'multi_eggs': data.get('multi_eggs', {}),  # {egg_key: {hatched_by_list: [user_id1, user_id2, ...], hatched_count: int}}
+                    'admin_tasks': data.get('admin_tasks', [])  # [{id, name, avatar_url, channel, reward, created_at}]
                 }
         except Exception as e:
             logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
@@ -103,7 +130,9 @@ def get_default_data():
         'referrers': {},
         'referral_earnings': {},
         'ton_payments': {},
-        'eggs_detail': {}
+        'eggs_detail': {},
+        'multi_eggs': {},
+        'admin_tasks': []
     }
 
 # Функция для сохранения данных в файл
@@ -121,7 +150,9 @@ def save_data():
             'referrers': referrers,
             'referral_earnings': referral_earnings,
             'ton_payments': ton_payments,
-            'eggs_detail': eggs_detail
+            'eggs_detail': eggs_detail,
+            'multi_eggs': multi_eggs,
+            'admin_tasks': admin_tasks
         }
         
         # Логируем что сохраняем
@@ -169,7 +200,9 @@ completed_tasks = data['completed_tasks']
 referrers = data.get('referrers', {})  # {user_id: referrer_id}
 referral_earnings = data.get('referral_earnings', {})  # {referrer_id: total_earned}
 ton_payments = data.get('ton_payments', {})  # {user_id: [{'date': '2024-01-01', 'amount': 0.1, 'tx_hash': '...'}]}
-eggs_detail = data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched}}
+eggs_detail = data.get('eggs_detail', {})  # {egg_key: {sender_id, egg_id, hatched_by, timestamp_sent, timestamp_hatched, is_multi, max_hatches, hatched_count, hatched_by_list}}
+multi_eggs = data.get('multi_eggs', {})  # {egg_key: {hatched_by_list: [user_id1, user_id2, ...], hatched_count: int}}
+admin_tasks = data.get('admin_tasks', [])  # [{id, name, avatar_url, channel, reward, created_at}]
 
 # Логируем загруженные данные при старте
 logger.info(f"Bot started with data: {len(egg_points)} users with points, {len(referrers)} referrers, {len(eggs_detail)} eggs in detail")
@@ -230,6 +263,34 @@ def add_paid_eggs(user_id, amount):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     user_id = update.message.from_user.id
+    logger.info(f"=== START COMMAND RECEIVED === User ID: {user_id}, Args: {context.args}")
+    
+    # Обрабатываем параметр startapp из ссылки https://t.me/bot?startapp=referrer_id
+    # Когда пользователь переходит по ссылке, бот получает команду /start referrer_id
+    if context.args and len(context.args) > 0:
+        logger.info(f"START with args: {context.args}, first arg: {context.args[0]}")
+        try:
+            referrer_id = int(context.args[0])
+            
+            # Устанавливаем реферала только если:
+            # 1. У пользователя еще нет реферала
+            # 2. Реферал не является самим пользователем
+            if user_id not in referrers and referrer_id != user_id:
+                # Убеждаемся, что оба ID - int
+                user_id_int = int(user_id)
+                referrer_id_int = int(referrer_id)
+                
+                referrers[user_id_int] = referrer_id_int
+                logger.info(f"User {user_id_int} became referral of {referrer_id_int} via startapp link (total referrers now: {len(referrers)})")
+                
+                # Сохраняем данные
+                save_data()
+            elif user_id in referrers:
+                logger.info(f"User {user_id} already has referrer {referrers[user_id]}, ignoring startapp={referrer_id}")
+            else:
+                logger.info(f"User {user_id} tried to set themselves as referrer via startapp, ignoring")
+        except ValueError:
+            logger.warning(f"Invalid referrer_id in startapp parameter: {context.args[0]}")
     
     # Получаем статистику пользователя
     hatched_count = eggs_hatched_by_user.get(user_id, 0)
@@ -298,11 +359,40 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Inline query received: '{query}' (original: '{update.inline_query.query}')")
     
-    # Показываем результат если запрос пустой или содержит "egg"
-    if query and "egg" not in query:
+    # Парсим запрос: "egg" или "egg N" где N от 2 до 100
+    is_multi = False
+    max_hatches = 1
+    
+    # Проверяем, содержит ли запрос "egg"
+    if "egg" not in query:
         logger.info(f"Query '{query}' doesn't contain 'egg', returning empty results")
         await update.inline_query.answer([], cache_time=1)
         return
+    
+    # Пытаемся извлечь число после "egg"
+    # Форматы: "egg", "egg 50", "egg50", "egg 100", и т.д.
+    import re
+    egg_match = re.search(r'egg\s*(\d+)', query)
+    if egg_match:
+        hatch_count = int(egg_match.group(1))
+        # Multi egg от 2 до 100 вылуплений
+        if 2 <= hatch_count <= 100:
+            is_multi = True
+            max_hatches = hatch_count
+            logger.info(f"Multi egg requested with {max_hatches} hatches")
+        elif hatch_count == 1:
+            # Явно указано 1 - обычное яйцо
+            is_multi = False
+            max_hatches = 1
+        else:
+            # Число вне диапазона - используем обычное яйцо
+            logger.warning(f"Hatch count {hatch_count} is out of range (2-100), using regular egg")
+            is_multi = False
+            max_hatches = 1
+    else:
+        # Просто "egg" без числа - обычное яйцо
+        is_multi = False
+        max_hatches = 1
     
     # Получаем ID отправителя
     sender_id = update.inline_query.from_user.id
@@ -319,13 +409,24 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'egg_id': egg_id,
         'hatched_by': None,
         'timestamp_sent': datetime.now().isoformat(),
-        'timestamp_hatched': None
+        'timestamp_hatched': None,
+        'is_multi': is_multi,
+        'max_hatches': max_hatches,
+        'hatched_count': 0,
+        'hatched_by_list': []
     }
     
+    # Если это multi egg, инициализируем структуру для отслеживания вылуплений
+    if is_multi:
+        multi_eggs[egg_key] = {
+            'hatched_by_list': [],
+            'hatched_count': 0
+        }
+    
     # Сохраняем информацию об отправителе яйца
-    # Формат callback_data: hatch_{sender_id}|{egg_id}
-    # Реферал устанавливается когда кто-то открывает яйцо (открывающий становится рефералом отправителя)
-    callback_data = f"hatch_{sender_id}|{egg_id}"
+    # Формат callback_data: hatch_{sender_id}|{egg_id} или multi_{sender_id}|{egg_id} для multi egg
+    prefix = "multi" if is_multi else "hatch"
+    callback_data = f"{prefix}_{sender_id}|{egg_id}"
     
     # Проверяем длину callback_data (максимум 64 байта для Telegram)
     callback_data_bytes = len(callback_data.encode('utf-8'))
@@ -345,8 +446,9 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Callback data still too long, using timestamp-based egg_id: {egg_id}")
     
     # Создаем кнопку "Hatch"
+    button_text = "🥚 Hatch"
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🥚 Hatch", callback_data=callback_data)]
+        [InlineKeyboardButton(button_text, callback_data=callback_data)]
     ])
     
     # Безлимитный режим - всегда разрешаем отправку яиц
@@ -354,13 +456,19 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     can_send_free, daily_count, total_limit = check_daily_limit(sender_id)
     
     # Создаем результат с эмодзи яйца (безлимит)
+    if is_multi:
+        title = f"🥚 Send Multi Egg ({max_hatches}x)"
+        description = f"Multi egg - up to {max_hatches} users can hatch it!"
+    else:
+        title = "🥚 Send Egg"
+        description = "Click to send an egg to the chat"
     results = [
         InlineQueryResultArticle(
             id=egg_id,
-            title="🥚 Send Egg",
-            description="Click to send an egg to the chat",
+            title=title,
+            description=description,
             input_message_content=InputTextMessageContent(
-                message_text="🥚",
+                message_text="🥚",  # Всегда одно эмодзи яйца
                 parse_mode=ParseMode.HTML
             ),
             reply_markup=keyboard
@@ -416,19 +524,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clicker_id = query.from_user.id
     
     # Извлекаем данные из callback_data
-    # Формат: hatch_{sender_id}|{egg_id}
+    # Формат: hatch_{sender_id}|{egg_id} или multi_{sender_id}|{egg_id}
     # Поддерживаем старые форматы для обратной совместимости
     
     sender_id = None
     egg_id = None
+    is_multi = False
     
-    if not query.data.startswith("hatch_"):
+    # Проверяем формат callback_data: hatch_ или multi_
+    if query.data.startswith("multi_"):
+        is_multi = True
+        data_part = query.data[6:]  # 6 = len("multi_")
+    elif query.data.startswith("hatch_"):
+        is_multi = False
+        data_part = query.data[6:]  # 6 = len("hatch_")
+    else:
         await query.answer("❌ Ошибка: неверный формат данных", show_alert=True)
         logger.error(f"Invalid callback_data format: {query.data}")
         return
-    
-    # Убираем префикс "hatch_"
-    data_part = query.data[6:]  # 6 = len("hatch_")
     
     # Пробуем новый формат: sender_id|egg_id
     if "|" in data_part:
@@ -465,17 +578,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Could not parse callback_data: {query.data}")
         return
     
-    logger.info(f"Egg ID: {egg_id}, Sender ID: {sender_id}, Clicker ID: {clicker_id}")
+    logger.info(f"Egg ID: {egg_id}, Sender ID: {sender_id}, Clicker ID: {clicker_id}, Is Multi: {is_multi}")
     
     # Создаем уникальный ключ для яйца (комбинация sender_id и egg_id)
     # Это предотвращает коллизии при укорачивании UUID
     egg_key = f"{sender_id}_{egg_id}"
     
-    # Проверяем, не было ли уже вылуплено это яйцо
-    if egg_key in hatched_eggs:
-        await query.answer("🐣 This egg has already hatched!", show_alert=True)
-        logger.info(f"Egg {egg_key} already hatched")
-        return
+    # Получаем информацию о яйце из eggs_detail
+    egg_info = eggs_detail.get(egg_key, {})
+    if not egg_info:
+        # Если информации нет, определяем тип по префиксу callback_data
+        # Для multi используем значение из callback или дефолт 50
+        default_max = 50 if is_multi else 1
+        egg_info = {'is_multi': is_multi, 'max_hatches': default_max}
+    
+    # Определяем, является ли яйцо multi egg и максимальное количество вылуплений
+    is_multi_egg = egg_info.get('is_multi', is_multi)
+    max_hatches = egg_info.get('max_hatches', 1)
+    
+    # Если это multi egg, но max_hatches не установлен, используем значение из egg_info или дефолт
+    if is_multi_egg and max_hatches == 1:
+        max_hatches = egg_info.get('max_hatches', 50)  # Дефолт для старых multi eggs
+    
+    logger.info(f"Egg type check: is_multi={is_multi}, is_multi_egg={is_multi_egg}, max_hatches={max_hatches}, egg_key={egg_key}")
     
     # ВАЖНО: Проверяем, не пытается ли отправитель вылупить свое яйцо
     # Это должно быть ПЕРЕД любым изменением сообщения
@@ -484,34 +609,84 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"BLOCKED: Sender {sender_id} tried to hatch their own egg {egg_id}")
         return
     
-    # Если все проверки пройдены, вылупляем яйцо
-    # Помечаем яйцо как вылупленное СРАЗУ, чтобы предотвратить двойное вылупление
-    # Используем egg_key (комбинация sender_id и egg_id) для уникальности
-    hatched_eggs.add(egg_key)
-    
-    # Обновляем детальную информацию о яйце для Eggchain Explorer
-    if egg_key not in eggs_detail:
-        eggs_detail[egg_key] = {
-            'sender_id': sender_id,
-            'egg_id': egg_id,
-            'hatched_by': clicker_id,
-            'timestamp_sent': datetime.now().isoformat(),
-            'timestamp_hatched': datetime.now().isoformat()
-        }
+    # Для multi egg проверяем лимит и дубликаты
+    if is_multi_egg:
+        # Проверяем, не вылуплял ли уже этот пользователь это яйцо
+        multi_egg_data = multi_eggs.get(egg_key, {'hatched_by_list': [], 'hatched_count': 0})
+        if clicker_id in multi_egg_data['hatched_by_list']:
+            await query.answer("🐣 You have already hatched this multi egg!", show_alert=True)
+            logger.info(f"User {clicker_id} already hatched multi egg {egg_key}")
+            return
+        
+        # Проверяем лимит вылуплений
+        if multi_egg_data['hatched_count'] >= max_hatches:
+            await query.answer(f"🐣 This multi egg has reached its limit of {max_hatches} hatches!", show_alert=True)
+            logger.info(f"Multi egg {egg_key} reached limit of {max_hatches} hatches")
+            return
+        
+        # Добавляем пользователя в список вылупивших
+        multi_egg_data['hatched_by_list'].append(clicker_id)
+        multi_egg_data['hatched_count'] += 1
+        multi_eggs[egg_key] = multi_egg_data
+        
+        # Обновляем eggs_detail
+        if egg_key not in eggs_detail:
+            eggs_detail[egg_key] = {
+                'sender_id': sender_id,
+                'egg_id': egg_id,
+                'hatched_by': None,  # Для multi egg храним список в multi_eggs
+                'timestamp_sent': datetime.now().isoformat(),
+                'timestamp_hatched': datetime.now().isoformat(),
+                'is_multi': True,
+                'max_hatches': max_hatches,
+                'hatched_count': multi_egg_data['hatched_count'],
+                'hatched_by_list': multi_egg_data['hatched_by_list'].copy()
+            }
+        else:
+            eggs_detail[egg_key]['hatched_count'] = multi_egg_data['hatched_count']
+            eggs_detail[egg_key]['hatched_by_list'] = multi_egg_data['hatched_by_list'].copy()
+            if eggs_detail[egg_key]['hatched_count'] == 1:
+                eggs_detail[egg_key]['timestamp_hatched'] = datetime.now().isoformat()
     else:
-        eggs_detail[egg_key]['hatched_by'] = clicker_id
-        eggs_detail[egg_key]['timestamp_hatched'] = datetime.now().isoformat()
+        # Обычное яйцо - проверяем, не было ли уже вылуплено
+        if egg_key in hatched_eggs:
+            await query.answer("🐣 This egg has already hatched!", show_alert=True)
+            logger.info(f"Egg {egg_key} already hatched")
+            return
+        
+        # Помечаем яйцо как вылупленное
+        hatched_eggs.add(egg_key)
+        
+        # Обновляем детальную информацию о яйце для Eggchain Explorer
+        if egg_key not in eggs_detail:
+            eggs_detail[egg_key] = {
+                'sender_id': sender_id,
+                'egg_id': egg_id,
+                'hatched_by': clicker_id,
+                'timestamp_sent': datetime.now().isoformat(),
+                'timestamp_hatched': datetime.now().isoformat(),
+                'is_multi': False,
+                'max_hatches': 1,
+                'hatched_count': 1,
+                'hatched_by_list': [clicker_id]
+            }
+        else:
+            eggs_detail[egg_key]['hatched_by'] = clicker_id
+            eggs_detail[egg_key]['timestamp_hatched'] = datetime.now().isoformat()
+            eggs_detail[egg_key]['hatched_count'] = 1
+            eggs_detail[egg_key]['hatched_by_list'] = [clicker_id]
     
     # РЕФЕРАЛЬНАЯ СИСТЕМА: Если clicker_id еще не имеет реферала, устанавливаем sender_id как его реферала
     # Когда кто-то открывает яйцо, он становится рефералом того, кто отправил яйцо
+    # ВАЖНО: Для multi egg реферал устанавливается только при первом вылуплении
     if clicker_id not in referrers and sender_id != clicker_id:
         referrers[clicker_id] = sender_id
         logger.info(f"User {clicker_id} became referral of {sender_id} (total referrers now: {len(referrers)})")
     
     # Обновляем статистику
-    # Увеличиваем счетчик для того, кто вылупил
+    # Увеличиваем счетчик для того, кто вылупил (для каждого вылупления, включая multi egg)
     eggs_hatched_by_user[clicker_id] = eggs_hatched_by_user.get(clicker_id, 0) + 1
-    # Увеличиваем счетчик для отправителя (его яйцо вылупили)
+    # Увеличиваем счетчик для отправителя (его яйцо вылупили) - для каждого вылупления multi egg
     user_eggs_hatched_by_others[sender_id] = user_eggs_hatched_by_others.get(sender_id, 0) + 1
     
     # Начисляем поинты Egg
@@ -577,39 +752,173 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_data()
     logger.info(f"After save: {len(egg_points)} users with points, {len(referrers)} referrers")
     
-    await query.answer("🐣 Hatching egg...")
-    
-    logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
-    
-    # Создаем кнопки для открытия mini app и отправки еще одного яйца
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "📱 Hatch App",
-                url="https://t.me/ToHatchBot/app"
-            ),
-            InlineKeyboardButton(
-                "Send 🥚",
-                switch_inline_query_current_chat="egg"
-            )
-        ]
-    ])
-    
-    # Меняем 🥚 на 🐣 и добавляем кнопки
-    try:
-        await query.edit_message_text(
-            "🐣",
-            reply_markup=keyboard
-        )
-    except Exception as e:
-        logger.error(f"Error editing message: {e}")
-        # Если не удалось отредактировать, пробуем без кнопок
+    # Для multi egg показываем прогресс во всплывающем уведомлении и отправляем ЛС
+    if is_multi_egg:
+        # Получаем актуальные данные после обновления
+        # ВАЖНО: данные уже обновлены, поэтому hatched_count уже увеличен на 1
+        multi_egg_data = multi_eggs.get(egg_key, {'hatched_count': 0, 'hatched_by_list': []})
+        hatched_count = multi_egg_data['hatched_count']
+        remaining = max_hatches - hatched_count
+        
+        logger.info(f"Multi egg {egg_key}: hatched_count={hatched_count}, max_hatches={max_hatches}, remaining={remaining}, clicker_id={clicker_id}")
+        
+        # Показываем прогресс во всплывающем уведомлении
+        answer_text = f"{hatched_count}/{max_hatches}"
+        await query.answer(answer_text)
+        
+        # Отправляем личное сообщение пользователю, который вылупил яйцо
+        # Используем asyncio для небольшой задержки, чтобы убедиться, что callback обработан
+        await asyncio.sleep(0.1)  # Небольшая задержка 100ms
+        
         try:
-            await query.edit_message_text("🐣")
-        except Exception as e2:
-            logger.error(f"Error editing message without buttons: {e2}")
-            # Если и это не работает, просто отвечаем
-            await query.answer("🐣 Egg hatched!", show_alert=False)
+            # Создаем кнопки для ЛС сообщения
+            # Используем формат https://t.me/bot_username?startapp=sender_id для реферальной ссылки
+            referral_url = f"https://t.me/{BOT_USERNAME}?startapp={sender_id}"
+            ls_keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "📱 Hatch App",
+                        url=referral_url
+                    ),
+                    InlineKeyboardButton(
+                        "Send 🥚",
+                        switch_inline_query_current_chat="egg"
+                    )
+                ]
+            ])
+            
+            logger.info(f"Attempting to send personal message to user {clicker_id} after hatching multi egg {egg_key} ({hatched_count}/{max_hatches})")
+            
+            # Пытаемся отправить сообщение
+            sent_message = await context.bot.send_message(
+                chat_id=clicker_id,
+                text="🐣",
+                reply_markup=ls_keyboard,
+                disable_notification=False
+            )
+            
+            if sent_message:
+                logger.info(f"Successfully sent personal message to user {clicker_id} (message_id: {sent_message.message_id})")
+            else:
+                logger.warning(f"send_message returned None for user {clicker_id}")
+                
+        except Exception as e:
+            error_msg = str(e)
+            error_type = type(e).__name__
+            logger.error(f"Failed to send personal message to user {clicker_id}: {error_type}: {error_msg}", exc_info=True)
+            
+            # Если это ошибка "bot blocked by user" или "chat not found", логируем отдельно
+            if "chat not found" in error_msg.lower() or "bot was blocked" in error_msg.lower() or "forbidden" in error_msg.lower() or "user is deactivated" in error_msg.lower():
+                logger.warning(f"User {clicker_id} has not started a conversation with the bot, blocked it, or account is deactivated. Cannot send DM.")
+            else:
+                logger.error(f"Unexpected error when sending message to user {clicker_id}: {error_msg}")
+        
+        # Обновляем сообщение в чате
+        try:
+            if remaining > 0:
+                # Если еще можно вылупить, обновляем кнопку с прогрессом
+                button_text = f"🥚 Hatch ({hatched_count}/{max_hatches})"
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(button_text, callback_data=query.data)]
+                ])
+                # Сообщение остается просто с яйцом, не меняем текст
+                await query.edit_message_reply_markup(reply_markup=keyboard)
+                logger.info(f"Multi egg {egg_key} updated: {hatched_count}/{max_hatches} hatched, {remaining} remaining")
+            else:
+                # Если лимит достигнут, меняем эмодзи на 🐣 и добавляем кнопки
+                # Используем формат https://t.me/bot_username?startapp=sender_id для реферальной ссылки
+                referral_url = f"https://t.me/{BOT_USERNAME}?startapp={sender_id}"
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "📱 Hatch App",
+                            url=referral_url
+                        ),
+                        InlineKeyboardButton(
+                            "Send 🥚",
+                            switch_inline_query_current_chat="egg"
+                        )
+                    ]
+                ])
+                # Меняем эмодзи с 🥚 на 🐣
+                await query.edit_message_text(
+                    "🐣",
+                    reply_markup=keyboard
+                )
+                logger.info(f"Multi egg {egg_key} completed ({hatched_count}/{max_hatches}), changed emoji to 🐣 with buttons")
+        except Exception as e:
+            logger.error(f"Error updating multi egg message: {e}", exc_info=True)
+            # Пытаемся хотя бы обновить reply_markup
+            try:
+                if remaining > 0:
+                    button_text = f"🥚 Hatch ({hatched_count}/{max_hatches})"
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton(button_text, callback_data=query.data)]
+                    ])
+                    await query.edit_message_reply_markup(reply_markup=keyboard)
+                else:
+                    referral_url = f"https://t.me/{BOT_USERNAME}?startapp={sender_id}"
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton(
+                                "📱 Hatch App",
+                                url=referral_url
+                            ),
+                            InlineKeyboardButton(
+                                "Send 🥚",
+                                switch_inline_query_current_chat="egg"
+                            )
+                        ]
+                    ])
+                    await query.edit_message_reply_markup(reply_markup=keyboard)
+            except Exception as e2:
+                logger.error(f"Error updating multi egg reply_markup: {e2}", exc_info=True)
+    else:
+        # Обычное яйцо - вылуплено
+        await query.answer("🐣 Hatching egg...")
+        
+        logger.info(f"Egg {egg_id} hatched by {clicker_id} (sent by {sender_id})")
+        
+        # Создаем кнопки для открытия mini app и отправки еще одного яйца
+        # Используем формат https://t.me/bot_username?startapp=sender_id для реферальной ссылки
+        referral_url = f"https://t.me/{BOT_USERNAME}?startapp={sender_id}"
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "📱 Hatch App",
+                    url=referral_url
+                ),
+                InlineKeyboardButton(
+                    "Send 🥚",
+                    switch_inline_query_current_chat="egg"
+                )
+            ]
+        ])
+        
+        # Меняем 🥚 на 🐣 и добавляем кнопки
+        try:
+            await query.edit_message_text(
+                "🐣",
+                reply_markup=keyboard
+            )
+            logger.info(f"Successfully updated egg message to 🐣 with buttons for egg {egg_key}")
+        except Exception as e:
+            logger.error(f"Error editing message: {e}", exc_info=True)
+            # Если не удалось отредактировать текст, пробуем только reply_markup
+            try:
+                await query.edit_message_reply_markup(reply_markup=keyboard)
+                logger.info(f"Updated reply_markup only for egg {egg_key}")
+            except Exception as e2:
+                logger.error(f"Error updating reply_markup: {e2}", exc_info=True)
+                # Если и это не работает, пробуем отредактировать только текст
+                try:
+                    await query.edit_message_text("🐣")
+                    # Затем добавляем кнопки отдельно
+                    await query.edit_message_reply_markup(reply_markup=keyboard)
+                except Exception as e3:
+                    logger.error(f"Error editing message text and reply_markup: {e3}", exc_info=True)
+                    # Если и это не работает, просто отвечаем
+                    await query.answer("🐣 Egg hatched!", show_alert=False)
 
 
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -948,6 +1257,347 @@ async def get_payment_info_api(request):
     )
 
 
+# Admin API endpoints
+async def admin_stats_api(request):
+    """API endpoint для получения общей статистики (только для owner)"""
+    user_id = request.query.get('user_id')
+    if not user_id:
+        logger.warning("admin_stats_api: user_id not provided")
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        logger.warning(f"admin_stats_api: invalid user_id: {user_id}")
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем права доступа
+    if not OWNER_ID:
+        logger.warning(f"admin_stats_api: OWNER_ID not set. Request from user_id: {user_id}")
+        return web.json_response(
+            {'error': 'OWNER_ID not configured. Please set OWNER_ID environment variable in bot settings.'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if user_id != OWNER_ID:
+        logger.warning(f"admin_stats_api: Access denied. Request from user_id: {user_id}, OWNER_ID: {OWNER_ID}")
+        return web.json_response(
+            {'error': 'Access denied. Only owner can access admin panel.'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    logger.info(f"admin_stats_api: Access granted for user_id: {user_id}")
+    
+    # Подсчитываем статистику
+    total_users = len(set(list(eggs_hatched_by_user.keys()) + list(user_eggs_hatched_by_others.keys()) + list(eggs_sent_by_user.keys()) + list(egg_points.keys())))
+    total_eggs_sent = sum(eggs_sent_by_user.values())
+    total_eggs_hatched = len(hatched_eggs)
+    total_points = sum(egg_points.values())
+    
+    # Подсчитываем активных пользователей за последние 24 часа
+    from datetime import datetime, timedelta
+    yesterday = (datetime.now() - timedelta(days=1)).date().isoformat()
+    active_users = set()
+    for user_id_key, user_data in daily_eggs_sent.items():
+        if user_data.get('date') == date.today().isoformat() or user_data.get('date') == yesterday:
+            active_users.add(user_id_key)
+    
+    # Подсчитываем онлайн пользователей (активные за последний час - упрощенная версия)
+    # В реальности нужно отслеживать последнюю активность, но для простоты используем сегодняшних активных
+    online_users = len([uid for uid, data in daily_eggs_sent.items() if data.get('date') == date.today().isoformat()])
+    
+    return web.json_response(
+        {
+            'total_users': total_users,
+            'online_users': online_users,
+            'active_users_24h': len(active_users),
+            'total_eggs_sent': total_eggs_sent,
+            'total_eggs_hatched': total_eggs_hatched,
+            'total_points': total_points,
+            'total_referrals': len(referrers),
+            'total_tasks': len(admin_tasks)
+        },
+        headers={'Access-Control-Allow-Origin': '*'}
+    )
+
+
+async def check_task_subscription_api(request):
+    """API endpoint для проверки подписки на канал/чат/бота из задачи"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=200,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                'Access-Control-Max-Age': '3600'
+            }
+        )
+    
+    user_id = request.query.get('user_id')
+    task_id = request.query.get('task_id')
+    
+    if not user_id:
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if not task_id:
+        return web.json_response(
+            {'error': 'task_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        data = await request.json()
+        link = data.get('link', '')
+        
+        if not link:
+            return web.json_response(
+                {'error': 'link required'}, 
+                status=400,
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        
+        # Извлекаем username или chat_id из ссылки
+        # Форматы: https://t.me/username, t.me/username, @username
+        match = re.search(r'(?:t\.me/|@)([a-zA-Z0-9_]+)', link)
+        if not match:
+            return web.json_response(
+                {'error': 'Invalid link format'}, 
+                status=400,
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        
+        chat_identifier = match.group(1)
+        
+        # Проверяем, выполнена ли уже эта задача
+        task_key = f'task_{task_id}'
+        if completed_tasks.get(user_id, {}).get(task_key, False):
+            return web.json_response(
+                {'subscribed': True},
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        
+        # Проверяем подписку через Telegram Bot API
+        subscribed = False
+        if bot_application:
+            try:
+                # Пробуем получить информацию о чате
+                chat_member = await bot_application.bot.get_chat_member(
+                    chat_id=f'@{chat_identifier}',
+                    user_id=user_id
+                )
+                
+                # Проверяем, что пользователь подписан
+                if chat_member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
+                    subscribed = True
+                    
+                    # Находим задачу и начисляем награду
+                    task = None
+                    for t in admin_tasks:
+                        if t.get('id') == task_id:
+                            task = t
+                            break
+                    
+                    if task:
+                        reward = task.get('reward', 0)
+                        if reward > 0:
+                            # Начисляем Eggs
+                            today = date.today().isoformat()
+                            user_data = daily_eggs_sent.get(user_id, {})
+                            if user_data.get('date') != today:
+                                old_paid_eggs = daily_eggs_sent.get(user_id, {}).get('paid_eggs', 0)
+                                daily_eggs_sent[user_id] = {'date': today, 'count': 0, 'paid_eggs': old_paid_eggs}
+                                user_data = daily_eggs_sent[user_id]
+                            user_data['paid_eggs'] = user_data.get('paid_eggs', 0) + reward
+                        
+                        # Отмечаем задание как выполненное
+                        if user_id not in completed_tasks:
+                            completed_tasks[user_id] = {}
+                        completed_tasks[user_id][task_key] = True
+                        
+                        # Сохраняем данные
+                        save_data()
+                        
+                        logger.info(f"User {user_id} completed task {task_id}, earned {reward} Eggs")
+            except Exception as e:
+                logger.error(f"Error checking chat member for {chat_identifier}: {e}")
+                # Если не удалось проверить (например, бот не в чате или приватный канал), возвращаем False
+                subscribed = False
+        
+        return web.json_response(
+            {'subscribed': subscribed},
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    except Exception as e:
+        logger.error(f"Error checking task subscription: {e}", exc_info=True)
+        return web.json_response(
+            {'error': str(e)}, 
+            status=500,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+
+
+async def public_tasks_api(request):
+    """API endpoint для получения списка Tasks для пользователей"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=200,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                'Access-Control-Max-Age': '3600'
+            }
+        )
+    
+    return web.json_response(
+        {'tasks': admin_tasks},
+        headers={'Access-Control-Allow-Origin': '*'}
+    )
+
+
+async def admin_tasks_api(request):
+    """API endpoint для получения списка Tasks (только для owner)"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=200,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                'Access-Control-Max-Age': '3600'
+            }
+        )
+    
+    user_id = request.query.get('user_id')
+    if not user_id:
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем права доступа
+    if not OWNER_ID:
+        logger.warning(f"admin_tasks_api: OWNER_ID not set. Request from user_id: {user_id}")
+        return web.json_response(
+            {'error': 'OWNER_ID not configured. Please set OWNER_ID environment variable in bot settings.'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if user_id != OWNER_ID:
+        logger.warning(f"admin_tasks_api: Access denied. Request from user_id: {user_id}, OWNER_ID: {OWNER_ID}")
+        return web.json_response(
+            {'error': 'Access denied. Only owner can access admin panel.'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    logger.info(f"admin_tasks_api: Access granted for user_id: {user_id}")
+    
+    # Объявляем global в начале функции, до использования
+    global admin_tasks
+    
+    if request.method == 'GET':
+        return web.json_response(
+            {'tasks': admin_tasks},
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    elif request.method == 'POST':
+        # Добавление нового Task
+        try:
+            data = await request.json()
+            task_id = str(uuid.uuid4())
+            new_task = {
+                'id': task_id,
+                'name': data.get('name', ''),
+                'avatar_url': data.get('avatar_url', ''),
+                'channel': data.get('channel', ''),
+                'reward': int(data.get('reward', 0)),
+                'created_at': datetime.now().isoformat()
+            }
+            admin_tasks.append(new_task)
+            save_data()
+            return web.json_response(
+                {'success': True, 'task': new_task},
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        except Exception as e:
+            logger.error(f"Error adding task: {e}", exc_info=True)
+            return web.json_response(
+                {'error': str(e)}, 
+                status=500,
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+    elif request.method == 'DELETE':
+        # Удаление Task
+        try:
+            task_id = request.query.get('task_id')
+            if not task_id:
+                return web.json_response(
+                    {'error': 'task_id required'}, 
+                    status=400,
+                    headers={'Access-Control-Allow-Origin': '*'}
+                )
+            
+            admin_tasks = [t for t in admin_tasks if t.get('id') != task_id]
+            save_data()
+            return web.json_response(
+                {'success': True},
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        except Exception as e:
+            logger.error(f"Error deleting task: {e}", exc_info=True)
+            return web.json_response(
+                {'error': str(e)}, 
+                status=500,
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+    else:
+        return web.json_response(
+            {'error': 'Method not allowed'}, 
+            status=405,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+
+
 def main():
     """Запуск бота"""
     import threading
@@ -983,8 +1633,19 @@ def main():
             app.router.add_post('/api/ton/verify_payment', verify_ton_payment_api)
             app.router.add_get('/api/ton/payment_info', get_payment_info_api)
             app.router.add_options('/api/ton/verify_payment', verify_ton_payment_api)
+            # Admin API endpoints
+            app.router.add_get('/api/admin/stats', admin_stats_api)
+            app.router.add_get('/api/admin/tasks', admin_tasks_api)
+            app.router.add_post('/api/admin/tasks', admin_tasks_api)
+            app.router.add_delete('/api/admin/tasks', admin_tasks_api)
+            app.router.add_options('/api/admin/tasks', admin_tasks_api)
+            # Public tasks endpoint (for users to see available tasks)
+            app.router.add_get('/api/tasks', public_tasks_api)
             # Добавляем роуты для Eggchain Explorer
             setup_eggchain_routes(app)
+            # Task subscription check endpoint
+            app.router.add_post('/api/tasks/check_subscription', check_task_subscription_api)
+            app.router.add_options('/api/tasks/check_subscription', check_task_subscription_api)
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, '0.0.0.0', port)
