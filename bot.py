@@ -34,46 +34,35 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required!")
 
 # Файл для сохранения данных
-# Используем переменную окружения DATA_FILE_PATH если установлена, иначе рабочую директорию
-# На Railway рекомендуется использовать volume для постоянного хранения
+# Стратегия: используем рабочую директорию как основное хранилище (сохраняется между редеплоями на Railway)
+# Volume используется как дополнительный backup, если доступен
 import time
 
-DATA_FILE_PATH = os.environ.get('DATA_FILE_PATH')
-if DATA_FILE_PATH:
-    # Если указан путь к Volume, ждем его монтирования (до 10 секунд)
-    if DATA_FILE_PATH.startswith('/data/'):
-        data_dir = '/data'
-        max_wait = 10  # секунд
-        waited = 0
-        while not os.path.exists(data_dir) and waited < max_wait:
-            logger.info(f"Waiting for Volume to mount at {data_dir}... ({waited}s)")
-            time.sleep(1)
-            waited += 1
-        if not os.path.exists(data_dir):
-            logger.error(f"Volume at {data_dir} did not mount after {max_wait}s! Falling back to /app")
-            DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
-        else:
-            logger.info(f"Volume mounted at {data_dir}")
-            DATA_FILE = DATA_FILE_PATH
-    else:
-        DATA_FILE = DATA_FILE_PATH
+# Основной файл данных - всегда в рабочей директории (Railway сохраняет /app между редеплоями)
+DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
+
+# Volume для backup (если доступен)
+VOLUME_BACKUP_PATH = None
+volume_dir = '/data'
+if os.path.exists(volume_dir) and os.access(volume_dir, os.W_OK):
+    VOLUME_BACKUP_PATH = os.path.join(volume_dir, "bot_data.json")
+    logger.info(f"Volume backup available at {VOLUME_BACKUP_PATH}")
 else:
-    # Пробуем использовать /data для постоянного хранения (если доступно)
-    data_dir = '/data'
-    max_wait = 10  # секунд
+    # Ждем монтирования Volume (до 5 секунд при старте)
+    max_wait = 5
     waited = 0
-    while not os.path.exists(data_dir) and waited < max_wait:
-        logger.info(f"Waiting for Volume to mount at {data_dir}... ({waited}s)")
-        time.sleep(1)
-        waited += 1
-    
-    if os.path.exists(data_dir) and os.access(data_dir, os.W_OK):
-        logger.info(f"Using Volume at {data_dir}")
-        DATA_FILE = os.path.join(data_dir, "bot_data.json")
+    while not os.path.exists(volume_dir) and waited < max_wait:
+        time.sleep(0.5)
+        waited += 0.5
+    if os.path.exists(volume_dir) and os.access(volume_dir, os.W_OK):
+        VOLUME_BACKUP_PATH = os.path.join(volume_dir, "bot_data.json")
+        logger.info(f"Volume backup mounted at {VOLUME_BACKUP_PATH}")
     else:
-        # Fallback на рабочую директорию
-        logger.warning(f"Volume not available, using working directory: {os.getcwd()}")
-        DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
+        logger.warning(f"Volume not available, using only working directory: {DATA_FILE}")
+
+logger.info(f"Primary data file: {DATA_FILE}")
+if VOLUME_BACKUP_PATH:
+    logger.info(f"Volume backup: {VOLUME_BACKUP_PATH}")
 
 # ID канала Hatch Egg
 HATCH_EGG_CHANNEL = "@hatch_egg"
@@ -140,18 +129,17 @@ def load_data():
             logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
             return get_default_data()
     else:
-        # Если файл не найден в Volume, проверяем резервную копию в /app
-        backup_file = os.path.join(os.getcwd(), "bot_data.json")
-        if os.path.exists(backup_file) and DATA_FILE.startswith('/data/'):
-            logger.warning(f"Data file {DATA_FILE} not found, but found backup at {backup_file}. Copying to Volume...")
+        # Если основной файл не найден, проверяем backup в Volume
+        if VOLUME_BACKUP_PATH and os.path.exists(VOLUME_BACKUP_PATH):
+            logger.warning(f"Primary data file {DATA_FILE} not found, but found Volume backup at {VOLUME_BACKUP_PATH}. Restoring...")
             try:
                 import shutil
-                shutil.copy2(backup_file, DATA_FILE)
-                logger.info(f"Copied backup data from {backup_file} to {DATA_FILE}")
-                # Рекурсивно вызываем себя для загрузки скопированных данных
+                shutil.copy2(VOLUME_BACKUP_PATH, DATA_FILE)
+                logger.info(f"Restored data from Volume backup to {DATA_FILE}")
+                # Рекурсивно вызываем себя для загрузки восстановленных данных
                 return load_data()
             except Exception as e:
-                logger.error(f"Failed to copy backup data: {e}", exc_info=True)
+                logger.error(f"Failed to restore from Volume backup: {e}", exc_info=True)
         
         logger.warning(f"Data file {DATA_FILE} does not exist, using default data")
     return get_default_data()
@@ -215,6 +203,15 @@ def save_data():
         if os.path.exists(DATA_FILE):
             file_size = os.path.getsize(DATA_FILE)
             logger.info(f"Data saved successfully to {DATA_FILE} (size: {file_size} bytes)")
+            
+            # Если Volume доступен, создаем backup
+            if VOLUME_BACKUP_PATH:
+                try:
+                    import shutil
+                    shutil.copy2(DATA_FILE, VOLUME_BACKUP_PATH)
+                    logger.info(f"Backup saved to Volume: {VOLUME_BACKUP_PATH}")
+                except Exception as backup_error:
+                    logger.warning(f"Failed to save backup to Volume: {backup_error}")
         else:
             logger.error(f"CRITICAL: Data file {DATA_FILE} was not created after save!")
             
