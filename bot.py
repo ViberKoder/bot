@@ -36,16 +36,43 @@ if not BOT_TOKEN:
 # Файл для сохранения данных
 # Используем переменную окружения DATA_FILE_PATH если установлена, иначе рабочую директорию
 # На Railway рекомендуется использовать volume для постоянного хранения
+import time
+
 DATA_FILE_PATH = os.environ.get('DATA_FILE_PATH')
 if DATA_FILE_PATH:
-    DATA_FILE = DATA_FILE_PATH
+    # Если указан путь к Volume, ждем его монтирования (до 10 секунд)
+    if DATA_FILE_PATH.startswith('/data/'):
+        data_dir = '/data'
+        max_wait = 10  # секунд
+        waited = 0
+        while not os.path.exists(data_dir) and waited < max_wait:
+            logger.info(f"Waiting for Volume to mount at {data_dir}... ({waited}s)")
+            time.sleep(1)
+            waited += 1
+        if not os.path.exists(data_dir):
+            logger.error(f"Volume at {data_dir} did not mount after {max_wait}s! Falling back to /app")
+            DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
+        else:
+            logger.info(f"Volume mounted at {data_dir}")
+            DATA_FILE = DATA_FILE_PATH
+    else:
+        DATA_FILE = DATA_FILE_PATH
 else:
     # Пробуем использовать /data для постоянного хранения (если доступно)
     data_dir = '/data'
+    max_wait = 10  # секунд
+    waited = 0
+    while not os.path.exists(data_dir) and waited < max_wait:
+        logger.info(f"Waiting for Volume to mount at {data_dir}... ({waited}s)")
+        time.sleep(1)
+        waited += 1
+    
     if os.path.exists(data_dir) and os.access(data_dir, os.W_OK):
+        logger.info(f"Using Volume at {data_dir}")
         DATA_FILE = os.path.join(data_dir, "bot_data.json")
     else:
         # Fallback на рабочую директорию
+        logger.warning(f"Volume not available, using working directory: {os.getcwd()}")
         DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
 
 # ID канала Hatch Egg
