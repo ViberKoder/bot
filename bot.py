@@ -236,7 +236,15 @@ def save_data():
                 pass
 
 # Загружаем данные при старте
-data = load_data()
+# ВАЖНО: Если загрузка не удалась из-за ошибки (не отсутствия файла), бот не запустится
+# Это защита от потери данных
+try:
+    data = load_data()
+except RuntimeError as e:
+    logger.error(f"CRITICAL: Cannot start bot without data! Error: {e}")
+    logger.error("Bot will NOT start to prevent data loss. Please fix the data file manually.")
+    raise  # Останавливаем запуск бота
+
 hatched_eggs = data['hatched_eggs']
 eggs_hatched_by_user = data['eggs_hatched_by_user']
 user_eggs_hatched_by_others = data['user_eggs_hatched_by_others']
