@@ -34,35 +34,32 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is required!")
 
 # Файл для сохранения данных
-# Стратегия: используем рабочую директорию как основное хранилище (сохраняется между редеплоями на Railway)
-# Volume используется как дополнительный backup, если доступен
+# ВСЕГДА используем Volume /data/bot_data.json
 import time
 
-# Основной файл данных - всегда в рабочей директории (Railway сохраняет /app между редеплоями)
-DATA_FILE = os.path.join(os.getcwd(), "bot_data.json")
-
-# Volume для backup (если доступен)
-VOLUME_BACKUP_PATH = None
+DATA_FILE = '/data/bot_data.json'
 volume_dir = '/data'
-if os.path.exists(volume_dir) and os.access(volume_dir, os.W_OK):
-    VOLUME_BACKUP_PATH = os.path.join(volume_dir, "bot_data.json")
-    logger.info(f"Volume backup available at {VOLUME_BACKUP_PATH}")
-else:
-    # Ждем монтирования Volume (до 5 секунд при старте)
-    max_wait = 5
-    waited = 0
-    while not os.path.exists(volume_dir) and waited < max_wait:
-        time.sleep(0.5)
-        waited += 0.5
-    if os.path.exists(volume_dir) and os.access(volume_dir, os.W_OK):
-        VOLUME_BACKUP_PATH = os.path.join(volume_dir, "bot_data.json")
-        logger.info(f"Volume backup mounted at {VOLUME_BACKUP_PATH}")
-    else:
-        logger.warning(f"Volume not available, using only working directory: {DATA_FILE}")
 
-logger.info(f"Primary data file: {DATA_FILE}")
-if VOLUME_BACKUP_PATH:
-    logger.info(f"Volume backup: {VOLUME_BACKUP_PATH}")
+# Ждем монтирования Volume (до 30 секунд)
+max_wait = 30
+waited = 0
+while not os.path.exists(volume_dir) and waited < max_wait:
+    if waited == 0:
+        logger.info(f"Waiting for Volume to mount at {volume_dir}...")
+    time.sleep(1)
+    waited += 1
+
+if not os.path.exists(volume_dir):
+    logger.error(f"CRITICAL: Volume at {volume_dir} did not mount after {max_wait}s!")
+    logger.error("Bot cannot start without Volume. Please check Volume configuration in Railway.")
+    raise RuntimeError(f"Volume not mounted at {volume_dir}")
+
+if not os.access(volume_dir, os.W_OK):
+    logger.error(f"CRITICAL: Volume at {volume_dir} is not writable!")
+    raise RuntimeError(f"Volume at {volume_dir} is not writable")
+
+logger.info(f"Volume mounted successfully at {volume_dir}")
+logger.info(f"Data file: {DATA_FILE}")
 
 # ID канала Hatch Egg
 HATCH_EGG_CHANNEL = "@hatch_egg"
@@ -129,18 +126,6 @@ def load_data():
             logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
             return get_default_data()
     else:
-        # Если основной файл не найден, проверяем backup в Volume
-        if VOLUME_BACKUP_PATH and os.path.exists(VOLUME_BACKUP_PATH):
-            logger.warning(f"Primary data file {DATA_FILE} not found, but found Volume backup at {VOLUME_BACKUP_PATH}. Restoring...")
-            try:
-                import shutil
-                shutil.copy2(VOLUME_BACKUP_PATH, DATA_FILE)
-                logger.info(f"Restored data from Volume backup to {DATA_FILE}")
-                # Рекурсивно вызываем себя для загрузки восстановленных данных
-                return load_data()
-            except Exception as e:
-                logger.error(f"Failed to restore from Volume backup: {e}", exc_info=True)
-        
         logger.warning(f"Data file {DATA_FILE} does not exist, using default data")
     return get_default_data()
 
@@ -203,15 +188,6 @@ def save_data():
         if os.path.exists(DATA_FILE):
             file_size = os.path.getsize(DATA_FILE)
             logger.info(f"Data saved successfully to {DATA_FILE} (size: {file_size} bytes)")
-            
-            # Если Volume доступен, создаем backup
-            if VOLUME_BACKUP_PATH:
-                try:
-                    import shutil
-                    shutil.copy2(DATA_FILE, VOLUME_BACKUP_PATH)
-                    logger.info(f"Backup saved to Volume: {VOLUME_BACKUP_PATH}")
-                except Exception as backup_error:
-                    logger.warning(f"Failed to save backup to Volume: {backup_error}")
         else:
             logger.error(f"CRITICAL: Data file {DATA_FILE} was not created after save!")
             
