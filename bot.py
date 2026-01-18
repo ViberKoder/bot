@@ -1085,6 +1085,14 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def stats_api(request):
     """API endpoint для получения статистики"""
+    # Проверка режима обслуживания
+    if MAINTENANCE_MODE:
+        return web.json_response(
+            {'error': 'Bot is under maintenance. Please try again later.'},
+            status=503,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
     # Добавляем CORS headers
     user_id = request.query.get('user_id')
     if not user_id:
@@ -1238,6 +1246,14 @@ async def check_subscription_api(request):
 
 async def verify_ton_payment_api(request):
     """API endpoint для проверки и подтверждения TON платежа"""
+    # Проверка режима обслуживания
+    if MAINTENANCE_MODE:
+        return web.json_response(
+            {'error': 'Bot is under maintenance. Please try again later.'},
+            status=503,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
     # Добавляем CORS headers
     if request.method == 'OPTIONS':
         return web.Response(
