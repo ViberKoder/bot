@@ -87,15 +87,21 @@ REFERRAL_PERCENTAGE = 0.25  # 25% от поинтов реферала
 # Функция для загрузки данных из файла
 def load_data():
     """Загружает данные из файла"""
+    logger.info(f"=== LOADING DATA ===")
     logger.info(f"Loading data from: {DATA_FILE}")
     logger.info(f"Current working directory: {os.getcwd()}")
+    logger.info(f"Volume /data exists: {os.path.exists('/data')}")
+    logger.info(f"Volume /data writable: {os.access('/data', os.W_OK) if os.path.exists('/data') else False}")
     logger.info(f"File exists: {os.path.exists(DATA_FILE)}")
+    
     if os.path.exists(DATA_FILE):
         file_size = os.path.getsize(DATA_FILE)
         logger.info(f"Data file size: {file_size} bytes")
-    if os.path.exists(DATA_FILE):
-        file_size = os.path.getsize(DATA_FILE)
-        logger.info(f"Data file size: {file_size} bytes")
+        # Проверяем, что файл не пустой
+        if file_size == 0:
+            logger.error(f"CRITICAL: Data file {DATA_FILE} exists but is EMPTY (0 bytes)!")
+            logger.warning("Using default data - file will be overwritten on first save")
+            return get_default_data()
     
     if os.path.exists(DATA_FILE):
         try:
@@ -105,7 +111,12 @@ def load_data():
                 # Логируем загруженные данные для отладки
                 egg_points_count = len(data.get('egg_points', {}))
                 referrers_count = len(data.get('referrers', {}))
+                hatched_eggs_count = len(data.get('hatched_eggs', []))
+                eggs_detail_count = len(data.get('eggs_detail', {}))
+                logger.info(f"=== DATA LOADED SUCCESSFULLY ===")
                 logger.info(f"Loaded data: {egg_points_count} users with points, {referrers_count} referrers")
+                logger.info(f"Hatched eggs: {hatched_eggs_count}, Eggs detail: {eggs_detail_count}")
+                logger.info(f"=== END LOADING ===")
                 
                 return {
                     'hatched_eggs': set(data.get('hatched_eggs', [])),
@@ -126,7 +137,12 @@ def load_data():
             logger.error(f"Error loading data from {DATA_FILE}: {e}", exc_info=True)
             return get_default_data()
     else:
-        logger.warning(f"Data file {DATA_FILE} does not exist, using default data")
+        logger.error(f"=== DATA FILE NOT FOUND ===")
+        logger.error(f"Data file {DATA_FILE} does not exist!")
+        logger.error(f"Volume /data exists: {os.path.exists('/data')}")
+        logger.error(f"Volume /data writable: {os.access('/data', os.W_OK) if os.path.exists('/data') else False}")
+        logger.error("Using default data - ALL DATA WILL BE LOST!")
+        logger.error(f"=== END LOADING (DEFAULT DATA) ===")
     return get_default_data()
 
 # Функция для получения данных по умолчанию
