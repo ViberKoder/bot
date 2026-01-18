@@ -24,3 +24,6 @@ Thumbs.db
 
 # Bot data
 bot_data.json
+
+# Old/backup files
+bot_old.py
