@@ -33,6 +33,11 @@ if not BOT_TOKEN:
     logger.error("BOT_TOKEN environment variable is not set!")
     raise ValueError("BOT_TOKEN environment variable is required!")
 
+# Режим обслуживания (maintenance mode)
+MAINTENANCE_MODE = os.environ.get('MAINTENANCE_MODE', 'false').lower() == 'true'
+if MAINTENANCE_MODE:
+    logger.warning("⚠️ MAINTENANCE MODE ENABLED - Bot is in maintenance mode")
+
 # Файл для сохранения данных
 # ВСЕГДА используем Volume /data/bot_data.json
 import time
@@ -75,6 +80,42 @@ if OWNER_ID:
     except ValueError:
         OWNER_ID = None
         logger.warning("OWNER_ID is not a valid integer, admin panel will be disabled")
+
+# Режим обслуживания (maintenance mode)
+# Хранится в файле для сохранения между редеплоями
+MAINTENANCE_MODE_FILE = os.path.join(volume_dir, "maintenance_mode.json") if os.path.exists(volume_dir) else os.path.join(os.getcwd(), "maintenance_mode.json")
+
+def load_maintenance_mode():
+    """Загружает состояние режима обслуживания"""
+    try:
+        if os.path.exists(MAINTENANCE_MODE_FILE):
+            with open(MAINTENANCE_MODE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('enabled', False)
+    except Exception as e:
+        logger.error(f"Error loading maintenance mode: {e}")
+    # По умолчанию проверяем переменную окружения
+    return os.environ.get('MAINTENANCE_MODE', 'false').lower() == 'true'
+
+def save_maintenance_mode(enabled):
+    """Сохраняет состояние режима обслуживания"""
+    try:
+        data = {'enabled': enabled, 'updated_at': datetime.now().isoformat()}
+        with open(MAINTENANCE_MODE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        logger.info(f"Maintenance mode {'enabled' if enabled else 'disabled'}")
+    except Exception as e:
+        logger.error(f"Error saving maintenance mode: {e}")
+
+# Загружаем состояние режима обслуживания при старте
+MAINTENANCE_MODE = load_maintenance_mode()
+# Включаем режим обслуживания сразу (для переезда данных)
+MAINTENANCE_MODE = True
+save_maintenance_mode(True)
+if MAINTENANCE_MODE:
+    logger.warning("⚠️ MAINTENANCE MODE IS ENABLED - Bot is in maintenance mode!")
+else:
+    logger.info("Bot is running normally (maintenance mode disabled)")
 
 # Лимиты
 FREE_EGGS_PER_DAY = 10
@@ -317,6 +358,15 @@ def add_paid_eggs(user_id, amount):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
+    # Проверка режима обслуживания
+    if MAINTENANCE_MODE:
+        await update.message.reply_text(
+            "🔧 Бот находится на обслуживании.\n\n"
+            "Мы временно недоступны. Пожалуйста, попробуйте позже.",
+            parse_mode=ParseMode.HTML
+        )
+        return
+    
     user_id = update.message.from_user.id
     logger.info(f"=== START COMMAND RECEIVED === User ID: {user_id}, Args: {context.args}")
     
@@ -410,6 +460,11 @@ async def reset_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик inline запросов"""
+    # Проверка режима обслуживания
+    if MAINTENANCE_MODE:
+        await update.inline_query.answer([], cache_time=1)
+        return
+    
     query = update.inline_query.query.lower().strip()
     
     logger.info(f"Inline query received: '{query}' (original: '{update.inline_query.query}')")
@@ -567,6 +622,11 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик нажатий на кнопки"""
+    # Проверка режима обслуживания
+    if MAINTENANCE_MODE:
+        await update.callback_query.answer("🔧 Бот находится на обслуживании. Попробуйте позже.", show_alert=True)
+        return
+    
     query = update.callback_query
     
     logger.info(f"Button callback received: {query.data}")
@@ -1533,6 +1593,92 @@ async def public_tasks_api(request):
     )
 
 
+async def admin_maintenance_api(request):
+    """API endpoint для управления режимом обслуживания (только для owner)"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=200,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                'Access-Control-Max-Age': '3600'
+            }
+        )
+    
+    user_id = request.query.get('user_id')
+    if not user_id:
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем права доступа
+    if not OWNER_ID:
+        return web.json_response(
+            {'error': 'OWNER_ID not configured'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if user_id != OWNER_ID:
+        return web.json_response(
+            {'error': 'Access denied. Only owner can manage maintenance mode.'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if request.method == 'GET':
+        # Получить текущее состояние
+        return web.json_response(
+            {'maintenance_mode': MAINTENANCE_MODE},
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    elif request.method == 'POST':
+        # Изменить состояние
+        try:
+            data = await request.json()
+            enabled = data.get('enabled', False)
+            if not isinstance(enabled, bool):
+                enabled = str(enabled).lower() == 'true'
+            
+            # Обновляем глобальную переменную
+            global MAINTENANCE_MODE
+            MAINTENANCE_MODE = enabled
+            save_maintenance_mode(enabled)
+            
+            logger.info(f"Maintenance mode {'ENABLED' if enabled else 'DISABLED'} by owner {user_id}")
+            
+            return web.json_response(
+                {'success': True, 'maintenance_mode': enabled},
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        except Exception as e:
+            logger.error(f"Error updating maintenance mode: {e}", exc_info=True)
+            return web.json_response(
+                {'error': str(e)}, 
+                status=500,
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+    else:
+        return web.json_response(
+            {'error': 'Method not allowed'}, 
+            status=405,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+
+
 async def admin_tasks_api(request):
     """API endpoint для получения списка Tasks (только для owner)"""
     # Handle CORS preflight
@@ -1690,6 +1836,10 @@ def main():
             app.router.add_post('/api/admin/tasks', admin_tasks_api)
             app.router.add_delete('/api/admin/tasks', admin_tasks_api)
             app.router.add_options('/api/admin/tasks', admin_tasks_api)
+            # Maintenance mode API
+            app.router.add_get('/api/admin/maintenance', admin_maintenance_api)
+            app.router.add_post('/api/admin/maintenance', admin_maintenance_api)
+            app.router.add_options('/api/admin/maintenance', admin_maintenance_api)
             # Public tasks endpoint (for users to see available tasks)
             app.router.add_get('/api/tasks', public_tasks_api)
             # Добавляем роуты для Eggchain Explorer
