@@ -1699,6 +1699,82 @@ async def admin_maintenance_api(request):
         )
 
 
+async def admin_backup_api(request):
+    """API endpoint для скачивания backup данных (только для owner)"""
+    # Handle CORS preflight
+    if request.method == 'OPTIONS':
+        return web.Response(
+            status=200,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                'Access-Control-Max-Age': '3600'
+            }
+        )
+    
+    user_id = request.query.get('user_id')
+    if not user_id:
+        return web.json_response(
+            {'error': 'user_id required'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    try:
+        user_id = int(user_id)
+    except ValueError:
+        return web.json_response(
+            {'error': 'invalid user_id'}, 
+            status=400,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Проверяем права доступа
+    if not OWNER_ID:
+        return web.json_response(
+            {'error': 'OWNER_ID not configured'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    if user_id != OWNER_ID:
+        return web.json_response(
+            {'error': 'Access denied. Only owner can download backup.'}, 
+            status=403,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+    
+    # Читаем файл данных
+    try:
+        if not os.path.exists(DATA_FILE):
+            return web.json_response(
+                {'error': 'Data file not found'}, 
+                status=404,
+                headers={'Access-Control-Allow-Origin': '*'}
+            )
+        
+        with open(DATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        logger.info(f"Backup downloaded by owner {user_id}")
+        
+        return web.json_response(
+            data,
+            headers={
+                'Access-Control-Allow-Origin': '*',
+                'Content-Type': 'application/json'
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error reading backup: {e}", exc_info=True)
+        return web.json_response(
+            {'error': str(e)}, 
+            status=500,
+            headers={'Access-Control-Allow-Origin': '*'}
+        )
+
+
 async def admin_tasks_api(request):
     """API endpoint для получения списка Tasks (только для owner)"""
     # Handle CORS preflight
@@ -1860,6 +1936,9 @@ def main():
             app.router.add_get('/api/admin/maintenance', admin_maintenance_api)
             app.router.add_post('/api/admin/maintenance', admin_maintenance_api)
             app.router.add_options('/api/admin/maintenance', admin_maintenance_api)
+            # Backup data API (only for owner)
+            app.router.add_get('/api/admin/backup', admin_backup_api)
+            app.router.add_options('/api/admin/backup', admin_backup_api)
             # Public tasks endpoint (for users to see available tasks)
             app.router.add_get('/api/tasks', public_tasks_api)
             # Добавляем роуты для Eggchain Explorer
