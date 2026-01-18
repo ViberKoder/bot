@@ -83,7 +83,11 @@ if OWNER_ID:
 
 # Режим обслуживания (maintenance mode)
 # Хранится в файле для сохранения между редеплоями
-MAINTENANCE_MODE_FILE = os.path.join(volume_dir, "maintenance_mode.json") if os.path.exists(volume_dir) else os.path.join(os.getcwd(), "maintenance_mode.json")
+# Используем volume_dir если доступен, иначе рабочую директорию
+if os.path.exists(volume_dir) and os.access(volume_dir, os.W_OK):
+    MAINTENANCE_MODE_FILE = os.path.join(volume_dir, "maintenance_mode.json")
+else:
+    MAINTENANCE_MODE_FILE = os.path.join(os.getcwd(), "maintenance_mode.json")
 
 def load_maintenance_mode():
     """Загружает состояние режима обслуживания"""
